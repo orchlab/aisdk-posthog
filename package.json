@@ -1,0 +1,103 @@
+{
+  "name": "aisdk-posthog",
+  "version": "0.1.0",
+  "description": "PostHog LLM analytics integration for the Vercel AI SDK (OpenTelemetry-based)",
+  "author": "Miro K <mirik.kubal@gmail.com>",
+  "contributors": [
+    "Orchestra"
+  ],
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/orchlab/aisdk-posthog.git"
+  },
+  "bugs": {
+    "url": "https://github.com/orchlab/aisdk-posthog/issues"
+  },
+  "homepage": "https://github.com/orchlab/aisdk-posthog#readme",
+  "keywords": [
+    "ai-sdk",
+    "vercel-ai-sdk",
+    "posthog",
+    "analytics",
+    "llm",
+    "ai",
+    "observability",
+    "telemetry",
+    "opentelemetry"
+  ],
+  "main": "./dist/cjs/src/index.js",
+  "module": "./dist/esm/src/index.js",
+  "types": "./dist/esm/src/index.d.ts",
+  "files": [
+    "dist/esm",
+    "dist/cjs",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/esm/src/index.d.ts",
+        "default": "./dist/esm/src/index.js"
+      },
+      "require": {
+        "types": "./dist/cjs/src/index.d.ts",
+        "default": "./dist/cjs/src/index.js"
+      }
+    },
+    "./ai": {
+      "import": {
+        "types": "./dist/esm/src/ai.d.ts",
+        "default": "./dist/esm/src/ai.js"
+      },
+      "require": {
+        "types": "./dist/cjs/src/ai.d.ts",
+        "default": "./dist/cjs/src/ai.js"
+      }
+    }
+  },
+  "sideEffects": false,
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "dev": "pnpm run \"/^build:watch:.*$/\"",
+    "build": "pnpm run \"/^build:(esm|cjs)$/\"",
+    "build:esm": "tsc",
+    "build:cjs": "tsc --outDir dist/cjs --module commonjs",
+    "build:watch:esm": "tsc --watch",
+    "build:watch:cjs": "tsc --watch --outDir dist/cjs --module commonjs",
+    "clean": "rm -rf dist",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "prepare": "tsc && tsc --outDir dist/cjs --module commonjs",
+    "prepack": "rm -f dist/esm/tsconfig.tsbuildinfo dist/cjs/tsconfig.tsbuildinfo",
+    "prepublishOnly": "pnpm run clean && pnpm run test"
+  },
+  "dependencies": {
+    "@opentelemetry/api": "^1.9.0",
+    "@opentelemetry/context-async-hooks": "^2.6.0",
+    "@opentelemetry/core": "^2.5.1",
+    "@opentelemetry/sdk-trace-base": "^2.5.1",
+    "llm-info": "^1.0.69",
+    "posthog-node": "^5.9.2"
+  },
+  "peerDependencies": {
+    "ai": ">=6.0.0"
+  },
+  "peerDependenciesMeta": {
+    "ai": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "ai": "^6.0.116",
+    "typescript": "5.9.2",
+    "vitest": "3.2.4"
+  }
+}
