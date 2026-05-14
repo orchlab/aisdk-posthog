@@ -153,6 +153,7 @@ export function createAISDKTelemetry(
     privacyMode: options.privacyMode ?? false,
     flushAt: options.flushAt,
     getContext: options.getContext,
+    costCalculation: options.costCalculation ?? 'server',
     hasExecutionTrace: (traceId) => traceIdToExecutionUid.has(traceId),
     getExecutionUidByTraceId: (traceId) => traceIdToExecutionUid.get(traceId),
     logger,

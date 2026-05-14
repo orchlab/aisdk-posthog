@@ -223,4 +223,78 @@ describe('createAISDKTelemetry', () => {
       expect(toolEvent!.properties.$ai_output_state).toEqual({ hits: 1 });
     });
   });
+
+  describe('costCalculation', () => {
+    async function emitGeneration(
+      inst: ReturnType<typeof createAISDKTelemetry>,
+    ) {
+      try {
+        await inst.withExecutionTrace(
+          'exec_cost',
+          'chat.reply',
+          {},
+          async () => {
+            const cfg = inst.getTelemetry('test-fn')!;
+            await cfg.tracer.startActiveSpan(
+              'ai.generateText.doGenerate',
+              {
+                attributes: {
+                  'ai.operationId': 'ai.generateText.doGenerate',
+                  'ai.model.id': 'gpt-4o',
+                  'ai.usage.inputTokens': 1000,
+                  'ai.usage.outputTokens': 500,
+                },
+              },
+              (span) => span.end(),
+            );
+          },
+        );
+      } finally {
+        await inst.shutdown();
+      }
+    }
+
+    it("'server' mode (default) omits $ai_*_cost_usd so PostHog can enrich", async () => {
+      const inst = createAISDKTelemetry({
+        apiKey: 'phc_test',
+        enabled: true,
+        registerGlobalContextManager: true,
+        getContext: () => ({ distinctId: 'user_cost' }),
+      });
+
+      await emitGeneration(inst);
+
+      const generation = captureCalls.find((c) => c.event === '$ai_generation');
+      expect(generation).toBeDefined();
+      expect(generation!.properties.$ai_input_cost_usd).toBeUndefined();
+      expect(generation!.properties.$ai_output_cost_usd).toBeUndefined();
+      expect(generation!.properties.$ai_total_cost_usd).toBeUndefined();
+      // Token counts and model are still present so the server can compute cost.
+      expect(generation!.properties.$ai_input_tokens).toBe(1000);
+      expect(generation!.properties.$ai_output_tokens).toBe(500);
+      expect(generation!.properties.$ai_model).toBe('gpt-4o');
+    });
+
+    it("'client' mode emits $ai_*_cost_usd via llm-info", async () => {
+      const inst = createAISDKTelemetry({
+        apiKey: 'phc_test',
+        enabled: true,
+        registerGlobalContextManager: true,
+        costCalculation: 'client',
+        getContext: () => ({ distinctId: 'user_cost' }),
+      });
+
+      await emitGeneration(inst);
+
+      const generation = captureCalls.find((c) => c.event === '$ai_generation');
+      expect(generation).toBeDefined();
+      // Cost present and positive (gpt-4o is in the llm-info catalog).
+      expect(generation!.properties.$ai_input_cost_usd).toBeTypeOf('number');
+      expect(generation!.properties.$ai_output_cost_usd).toBeTypeOf('number');
+      expect(generation!.properties.$ai_total_cost_usd).toBeTypeOf('number');
+      expect(
+        generation!.properties.$ai_total_cost_usd as number,
+      ).toBeGreaterThan(0);
+    });
+  });
 });

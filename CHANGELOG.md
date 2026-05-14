@@ -1,5 +1,30 @@
 # aisdk-posthog
 
+## 0.2.0
+
+### Minor Changes
+
+- **Default cost calculation moved to PostHog server-side.**
+
+  Add `costCalculation: 'server' | 'client'` option (default: `'server'`).
+  In the default `'server'` mode the exporter omits `$ai_input_cost_usd`,
+  `$ai_output_cost_usd`, and `$ai_total_cost_usd` from emitted
+  `$ai_generation` events; PostHog fills them in from `$ai_model` +
+  token counts using its own pricing tables. This matches the behavior of
+  the official `@posthog/ai` wrappers (OpenAI, Anthropic, Vercel
+  middleware) and means cost stays accurate as PostHog updates pricing,
+  without consumers needing to ship `llm-info` updates.
+
+  Set `costCalculation: 'client'` to keep the previous behavior of
+  computing cost via `llm-info` and embedding it on the event.
+
+  **Migration from 0.1.x:** if you rely on `$ai_*_cost_usd` being present
+  on the emitted event before it reaches PostHog (e.g. a downstream
+  processor that reads it), pass `costCalculation: 'client'` to
+  `createAISDKTelemetry`. Otherwise no code change is needed and you'll
+  start seeing PostHog's authoritative cost numbers in the LLM Analytics
+  UI.
+
 ## 0.1.0
 
 ### Minor Changes

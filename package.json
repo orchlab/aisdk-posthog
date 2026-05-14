@@ -1,6 +1,6 @@
 {
   "name": "aisdk-posthog",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "PostHog LLM analytics integration for the Vercel AI SDK (OpenTelemetry-based)",
   "author": "Miro K <mirik.kubal@gmail.com>",
   "contributors": [

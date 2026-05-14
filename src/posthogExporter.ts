@@ -71,6 +71,11 @@ export interface PostHogAISdkExporterOptions {
   /** Flush threshold (default: 1 for serverless) */
   flushAt?: number;
   /**
+   * Where cost is computed. `'server'` omits cost fields and lets PostHog
+   * fill them in. `'client'` computes via `llm-info`. Default: `'server'`.
+   */
+  costCalculation?: 'server' | 'client';
+  /**
    * Returns true when the given traceId belongs to an execution span
    * (created by `withExecutionTrace`). Used to demote AI SDK outer
    * trace spans (`ai.streamText`) so they don't replace the execution
@@ -605,8 +610,14 @@ export class PostHogAISdkExporter implements SpanExporter {
       getAttr(attrs, 'gen_ai.response.model') ??
       getAttr(attrs, 'ai.model.id');
 
-    // Cost calculation (split into input/output/total)
-    const cost = getModelCostBreakdown(modelId, inputTokens, outputTokens);
+    // Cost calculation. In `'server'` mode (default) we omit the cost fields
+    // and let PostHog enrich server-side from `$ai_model` + token counts.
+    // Per-event overrides are still possible via `context.properties` because
+    // `capture()` merges them in last and so wins over what we set here.
+    const cost =
+      this.options.costCalculation === 'client'
+        ? getModelCostBreakdown(modelId, inputTokens, outputTokens)
+        : {};
 
     // Streaming metrics
     const msToFirstChunk = getNumAttr(attrs, 'ai.response.msToFirstChunk');

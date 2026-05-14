@@ -60,4 +60,23 @@ export interface AISDKTelemetryOptions {
   tracerName?: string;
   /** Tracer version surfaced via the OTel API (default: '1.0.0'). */
   tracerVersion?: string;
+  /**
+   * Where cost is computed for `$ai_generation` events.
+   *
+   * - `'server'` (default): omit `$ai_input_cost_usd` / `$ai_output_cost_usd` /
+   *   `$ai_total_cost_usd` from emitted events. PostHog enriches them
+   *   server-side from `$ai_model` + `$ai_input_tokens` + `$ai_output_tokens`
+   *   using its own pricing tables. Matches the behavior of the official
+   *   `@posthog/ai` wrappers (OpenAI, Anthropic, Vercel middleware).
+   * - `'client'`: compute cost locally via the `llm-info` package and emit
+   *   the cost fields on the event. PostHog will not overwrite them. Use
+   *   this when you need cost in the event before it reaches PostHog (e.g.
+   *   for a custom downstream processor) or when you need to support models
+   *   `llm-info` knows about that PostHog's pricing tables don't.
+   *
+   * Per-event overrides are still possible via `context.properties` —
+   * setting `$ai_input_cost_usd` / `$ai_output_cost_usd` / `$ai_total_cost_usd`
+   * there overrides whatever this option produces.
+   */
+  costCalculation?: 'server' | 'client';
 }

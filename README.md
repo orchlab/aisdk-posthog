@@ -187,18 +187,27 @@ The `operationId` (second arg) is free-form — pick whatever name makes sense f
 | `registerGlobalContextManager` | `true`                     | Installs `AsyncLocalStorageContextManager` as the global OTel context manager. Set to `false` if your app already wires one.                                                                                                |
 | `tracerName`                   | `aisdk-posthog`            | Surfaced via the OTel API.                                                                                                                                                                                                  |
 | `tracerVersion`                | `1.0.0`                    | Surfaced via the OTel API.                                                                                                                                                                                                  |
+| `costCalculation`              | `'server'`                 | `'server'`: omit `$ai_*_cost_usd` fields and let PostHog enrich server-side from `$ai_model` + token counts (matches the official `@posthog/ai` wrappers). `'client'`: compute cost locally via `llm-info` and include it on the event. |
+
+## Cost calculation
+
+By default (`costCalculation: 'server'`), this package omits the `$ai_input_cost_usd` / `$ai_output_cost_usd` / `$ai_total_cost_usd` fields and lets PostHog fill them in server-side from `$ai_model` + token counts. This matches the behavior of the official `@posthog/ai` wrappers (OpenAI, Anthropic, Vercel middleware) and means you get cost from PostHog's authoritative pricing tables — without needing to ship `llm-info` updates to your app every time a new model is released.
+
+Switch to `'client'` if you need the cost embedded in the event before it reaches PostHog (e.g. you have a downstream processor that reads `$ai_total_cost_usd`), or if you support models that `llm-info` knows about but PostHog's server-side tables don't.
+
+Per-event overrides are still possible regardless of mode — return `$ai_input_cost_usd` etc. from `getContext` via the `properties` field and they win over whatever this option produces.
 
 ## What's emitted
 
 | AI SDK operation                                                    | PostHog event                                                    |
 | ------------------------------------------------------------------- | ---------------------------------------------------------------- |
 | `ai.generateText`, `ai.streamText` (outer span)                     | `$ai_trace` (or `$ai_span` when wrapped in `withExecutionTrace`) |
-| `ai.generateText.doGenerate`, `ai.streamText.doStream` (inner span) | `$ai_generation` (with token counts, cost USD, model parameters) |
+| `ai.generateText.doGenerate`, `ai.streamText.doStream` (inner span) | `$ai_generation` (token counts, model parameters; cost is filled in by PostHog server-side or computed client-side, see [Cost calculation](#cost-calculation)) |
 | `ai.toolCall`                                                       | `$ai_span` with `$ai_input_state` / `$ai_output_state`           |
 | `withExecutionTrace(...)` root                                      | `$ai_trace`                                                      |
 | Any other `ai.operationId` (e.g. `ai.embed`)                        | `$ai_span`                                                       |
 
-`$ai_generation` events include `$ai_input_cost_usd`, `$ai_output_cost_usd`, `$ai_total_cost_usd` when the model is recognized by `llm-info`. Bedrock cross-region prefixes (`us.anthropic.claude-...`) and provider prefixes (`anthropic.claude-...`) are stripped before lookup.
+In `'client'` cost mode, `$ai_generation` events include `$ai_input_cost_usd`, `$ai_output_cost_usd`, `$ai_total_cost_usd` when the model is recognized by `llm-info`. Bedrock cross-region prefixes (`us.anthropic.claude-...`) and provider prefixes (`anthropic.claude-...`) are stripped before lookup. In the default `'server'` mode these fields are omitted and PostHog fills them in.
 
 ## Streaming and parent-child spans
 
