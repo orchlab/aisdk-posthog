@@ -1,5 +1,19 @@
 # aisdk-posthog
 
+## 0.2.1
+
+### Patch Changes
+
+- **Slimmer published tarball.** Drop `composite: true` from `tsconfig.json`
+  so the build no longer emits `dist/esm/tsconfig.tsbuildinfo` and
+  `dist/cjs/tsconfig.tsbuildinfo` — together ~170 kB of TypeScript
+  incremental build cache that was being shipped to every consumer for no
+  benefit (this package has no project references and doesn't need
+  composite). Removes the now-redundant `prepack` strip script.
+
+  No source / runtime / API change. Packed tarball drops from ~88 kB →
+  ~40 kB, unpacked from ~440 kB → ~250 kB.
+
 ## 0.2.0
 
 ### Minor Changes

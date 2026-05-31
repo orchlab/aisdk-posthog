@@ -1,6 +1,6 @@
 {
   "name": "aisdk-posthog",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "PostHog LLM analytics integration for the Vercel AI SDK (OpenTelemetry-based)",
   "author": "Miro K <mirik.kubal@gmail.com>",
   "contributors": [
@@ -75,7 +75,6 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "prepare": "tsc && tsc --outDir dist/cjs --module commonjs",
-    "prepack": "rm -f dist/esm/tsconfig.tsbuildinfo dist/cjs/tsconfig.tsbuildinfo",
     "prepublishOnly": "pnpm run clean && pnpm run test"
   },
   "dependencies": {

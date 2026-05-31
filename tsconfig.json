@@ -9,7 +9,6 @@
     "outDir": "dist/esm",
     "rootDir": ".",
     "baseUrl": ".",
-    "composite": true,
     "declaration": true,
     "declarationMap": true,
     "sourceMap": true,
