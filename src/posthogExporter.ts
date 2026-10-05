@@ -104,7 +104,8 @@ export interface PostHogAISdkExporterOptions {
 
 const REDACTED = '[REDACTED]';
 
-type SpanKindName = 'execution' | 'trace' | 'step' | 'generation' | 'tool' | 'other';
+type SpanKindName =
+  'execution' | 'trace' | 'step' | 'generation' | 'tool' | 'other';
 
 /**
  * Classifies a span. Returns undefined for spans that are not AI SDK /
@@ -215,7 +216,11 @@ function convertPart(part: GenAiPart): Record<string, unknown> {
         result: part.response,
       };
     case 'blob':
-      return { type: 'blob', mime_type: part.mime_type, modality: part.modality };
+      return {
+        type: 'blob',
+        mime_type: part.mime_type,
+        modality: part.modality,
+      };
     case 'uri':
       return { type: 'uri', uri: part.uri, mime_type: part.mime_type };
     default:
@@ -239,10 +244,7 @@ function convertMessages(messages: GenAiMessage[]): unknown[] {
   });
 }
 
-function numAttrSum(
-  attrs: Attributes,
-  ...keys: string[]
-): number | undefined {
+function numAttrSum(attrs: Attributes, ...keys: string[]): number | undefined {
   const values = keys.map((k) => getNumAttr(attrs, k));
   const defined = values.filter((v): v is number => v !== undefined);
   return defined.length > 0 ? defined.reduce((a, b) => a + b, 0) : undefined;
@@ -798,7 +800,10 @@ export class PostHogAISdkExporter implements SpanExporter {
       if (Array.isArray(tools) && tools.length > 0) {
         properties.$ai_tools = (
           tools as { name?: string; description?: string }[]
-        ).map((t) => ({ name: t.name, description: t.description }));
+        ).map((t) => ({
+          name: t.name,
+          description: t.description,
+        }));
       }
     } else {
       properties.$ai_input = REDACTED;

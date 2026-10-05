@@ -1,0 +1,31 @@
+name: Bug report
+description: Something is not working as documented
+labels: [bug]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: aisdk-posthog version
+    validations:
+      required: true
+  - type: input
+    id: ai-version
+    attributes:
+      label: ai and @ai-sdk/otel versions
+    validations:
+      required: true
+  - type: input
+    id: node
+    attributes:
+      label: Node version
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Minimal reproduction
+      render: ts

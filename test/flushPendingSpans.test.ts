@@ -24,7 +24,7 @@
 import { context as otelContext, trace } from '@opentelemetry/api';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
-import { createAISDKTelemetry } from './factory';
+import { createAISDKTelemetry } from '../src/factory';
 
 const captureCalls: Array<{
   distinctId: string;
@@ -91,8 +91,7 @@ describe('flushPendingSpans temporal containment', () => {
 
     const parentTrace = captureCalls.find(
       (c) =>
-        c.event === '$ai_span' &&
-        c.properties.$ai_span_name === 'invoke_agent',
+        c.event === '$ai_span' && c.properties.$ai_span_name === 'invoke_agent',
     );
     expect(parentTrace).toBeDefined();
 
@@ -134,8 +133,7 @@ describe('flushPendingSpans temporal containment', () => {
 
     const parentTrace = captureCalls.find(
       (c) =>
-        c.event === '$ai_span' &&
-        c.properties.$ai_span_name === 'invoke_agent',
+        c.event === '$ai_span' && c.properties.$ai_span_name === 'invoke_agent',
     );
     expect(parentTrace).toBeDefined();
 
@@ -188,8 +186,7 @@ describe('flushPendingSpans temporal containment', () => {
 
     const traceOps = captureCalls.filter(
       (c) =>
-        c.event === '$ai_span' &&
-        c.properties.$ai_span_name === 'invoke_agent',
+        c.event === '$ai_span' && c.properties.$ai_span_name === 'invoke_agent',
     );
     expect(traceOps).toHaveLength(2);
 

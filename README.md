@@ -275,3 +275,7 @@ Tests mock `posthog-node` and run real `ai@7` calls (mock language models: `gene
 ## License
 
 Apache-2.0.
+
+## Contributing
+
+See [CONTRIBUTING.md](./CONTRIBUTING.md). Runnable examples live in [`examples/`](./examples). Security issues: [SECURITY.md](./SECURITY.md).

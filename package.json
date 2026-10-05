@@ -26,12 +26,11 @@
     "telemetry",
     "opentelemetry"
   ],
-  "main": "./dist/cjs/src/index.js",
-  "module": "./dist/esm/src/index.js",
-  "types": "./dist/esm/src/index.d.ts",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "files": [
-    "dist/esm",
-    "dist/cjs",
+    "dist",
     "README.md",
     "CHANGELOG.md",
     "LICENSE"
@@ -39,22 +38,22 @@
   "exports": {
     ".": {
       "import": {
-        "types": "./dist/esm/src/index.d.ts",
-        "default": "./dist/esm/src/index.js"
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
       },
       "require": {
-        "types": "./dist/cjs/src/index.d.ts",
-        "default": "./dist/cjs/src/index.js"
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
       }
     },
     "./ai": {
       "import": {
-        "types": "./dist/esm/src/ai.d.ts",
-        "default": "./dist/esm/src/ai.js"
+        "types": "./dist/ai.d.ts",
+        "default": "./dist/ai.js"
       },
       "require": {
-        "types": "./dist/cjs/src/ai.d.ts",
-        "default": "./dist/cjs/src/ai.js"
+        "types": "./dist/ai.d.cts",
+        "default": "./dist/ai.cjs"
       }
     }
   },
@@ -63,19 +62,19 @@
     "node": ">=22.12"
   },
   "scripts": {
-    "dev": "pnpm run \"/^build:watch:.*$/\"",
-    "build": "pnpm run \"/^build:(esm|cjs)$/\"",
-    "build:esm": "tsc",
-    "build:cjs": "tsc --outDir dist/cjs --module commonjs",
-    "build:watch:esm": "tsc --watch",
-    "build:watch:cjs": "tsc --watch --outDir dist/cjs --module commonjs",
+    "build": "tsup",
+    "dev": "tsup --watch",
     "clean": "rm -rf dist",
     "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "prepare": "tsc && tsc --outDir dist/cjs --module commonjs",
-    "prepublishOnly": "pnpm run clean && pnpm run test"
+    "prepublishOnly": "pnpm run clean && pnpm run typecheck && pnpm run test && pnpm run build",
+    "example:generate": "tsx examples/generate-text.ts",
+    "example:stream": "tsx examples/stream-text.ts",
+    "example:agent": "tsx examples/agent-with-subagent.ts"
   },
   "dependencies": {
     "@opentelemetry/api": "^1.9.0",
@@ -91,10 +90,19 @@
   },
   "devDependencies": {
     "@ai-sdk/otel": "^1.0.127",
+    "@eslint/js": "^10.0.1",
     "@types/node": "^22",
     "ai": "^7.0.127",
+    "eslint": "^10.12.0",
+    "eslint-config-prettier": "^10.1.8",
+    "prettier": "^3.9.9",
+    "tsup": "^8.5.1",
+    "tsx": "^4.23.15",
     "typescript": "5.9.2",
+    "typescript-eslint": "^8.71.1",
     "vitest": "3.2.4",
     "zod": "^4.6.5"
-  }
+  },
+  "type": "module",
+  "packageManager": "pnpm@10.14.0"
 }

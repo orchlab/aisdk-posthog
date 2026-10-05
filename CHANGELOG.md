@@ -40,6 +40,14 @@
     reported as non-streaming. `embeddings` spans are `$ai_span` events
     carrying token usage, not `$ai_embedding` events.
 
+### Patch Changes
+
+- Repository restructure for open source: tests moved to `test/`, runnable
+  `examples/`, tsup build (ESM + CJS + types in a flat `dist/`, shared chunk so
+  both entry points share default-telemetry state), eslint/prettier config, CI
+  and release workflows, community health files. Public API and entry points
+  (`aisdk-posthog`, `aisdk-posthog/ai`) are unchanged.
+
 ## 0.2.1
 
 ### Patch Changes

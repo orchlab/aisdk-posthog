@@ -5,15 +5,21 @@
  * ToolLoopAgent / sub-agent runs.
  */
 
-import { generateText, simulateReadableStream, stepCountIs, streamText, tool } from 'ai';
+import {
+  generateText,
+  simulateReadableStream,
+  stepCountIs,
+  streamText,
+  tool,
+} from 'ai';
 import { MockLanguageModelV4 } from 'ai/test';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 
-import * as aiSubpath from './ai';
-import { setDefaultTelemetry } from './defaults';
-import { createAISDKTelemetry, toOtelTraceId } from './factory';
-import { subAgent } from './subAgent';
+import * as aiSubpath from '../src/ai';
+import { setDefaultTelemetry } from '../src/defaults';
+import { createAISDKTelemetry, toOtelTraceId } from '../src/factory';
+import { subAgent } from '../src/subAgent';
 
 interface Captured {
   distinctId: string;
@@ -47,7 +53,12 @@ const usage = {
 const toolCallResult = (toolName: string, input: object, id = 'call_1') =>
   ({
     content: [
-      { type: 'tool-call', toolCallId: id, toolName, input: JSON.stringify(input) },
+      {
+        type: 'tool-call',
+        toolCallId: id,
+        toolName,
+        input: JSON.stringify(input),
+      },
     ],
     finishReason: { unified: 'tool-calls', raw: 'tool-calls' },
     usage,
@@ -73,7 +84,11 @@ function toolThenAnswerModel(toolName: string, input: object, answer: string) {
   });
 }
 
-function streamToolThenAnswerModel(toolName: string, input: object, answer: string) {
+function streamToolThenAnswerModel(
+  toolName: string,
+  input: object,
+  answer: string,
+) {
   let n = 0;
   return new MockLanguageModelV4({
     modelId: 'mock-stream',
@@ -88,13 +103,21 @@ function streamToolThenAnswerModel(toolName: string, input: object, answer: stri
                 toolName,
                 input: JSON.stringify(input),
               },
-              { type: 'finish', finishReason: { unified: 'tool-calls', raw: 'tc' }, usage },
+              {
+                type: 'finish',
+                finishReason: { unified: 'tool-calls', raw: 'tc' },
+                usage,
+              },
             ]
           : [
               { type: 'text-start', id: 't' },
               { type: 'text-delta', id: 't', delta: answer },
               { type: 'text-end', id: 't' },
-              { type: 'finish', finishReason: { unified: 'stop', raw: 'stop' }, usage },
+              {
+                type: 'finish',
+                finishReason: { unified: 'stop', raw: 'stop' },
+                usage,
+              },
             ]) as any,
       }),
     }),
@@ -120,7 +143,8 @@ function makeInstance(overrides: Record<string, unknown> = {}) {
       resolverCalls.push(info);
       const uid =
         info.executionUidByTraceId ??
-        (info.spanAttributes['ai.telemetry.metadata.executionUid'] as string | undefined);
+        (info.spanAttributes['ai.telemetry.metadata.executionUid'] as
+          string | undefined);
       return uid
         ? {
             distinctId: `user_of_${uid}`,
@@ -136,7 +160,8 @@ function makeInstance(overrides: Record<string, unknown> = {}) {
   return { inst, resolverCalls };
 }
 
-const byEvent = (event: string) => captureCalls.filter((c) => c.event === event);
+const byEvent = (event: string) =>
+  captureCalls.filter((c) => c.event === event);
 const byName = (name: string) =>
   captureCalls.find((c) => c.properties.$ai_span_name === name);
 
@@ -226,7 +251,9 @@ describe('ai@7 generateText inside withExecutionTrace', () => {
     expect(JSON.parse(toolCallGen.properties.$ai_response_tool_calls)).toEqual([
       { toolCallId: 'call_1', toolName: 'echo', input: { x: 'hi' } },
     ]);
-    expect(toolCallGen.properties.$ai_output_choices[0].content[0]).toMatchObject({
+    expect(
+      toolCallGen.properties.$ai_output_choices[0].content[0],
+    ).toMatchObject({
       type: 'tool-call',
       function: { name: 'echo' },
       id: 'call_1',
@@ -255,7 +282,10 @@ describe('ai@7 generateText inside withExecutionTrace', () => {
       prompt: 'p',
       tools: { echo },
       stopWhen: stepCountIs(3),
-      telemetry: inst.getTelemetry('fn', { executionUid: 'exec_meta', team: 'blue' }),
+      telemetry: inst.getTelemetry('fn', {
+        executionUid: 'exec_meta',
+        team: 'blue',
+      }),
     });
     await inst.shutdown();
 
@@ -294,7 +324,9 @@ describe('ai@7 generateText inside withExecutionTrace', () => {
 
     const dump = JSON.stringify(captureCalls);
     expect(dump).not.toContain('secret');
-    expect(byEvent('$ai_generation')[0].properties.$ai_input).toBe('[REDACTED]');
+    expect(byEvent('$ai_generation')[0].properties.$ai_input).toBe(
+      '[REDACTED]',
+    );
     expect(byName('tool: echo')!.properties.$ai_input_state).toBe('[REDACTED]');
   });
 
@@ -368,7 +400,9 @@ describe("'aisdk-posthog/ai' drop-in wrappers with ai@7", () => {
 
     await inst.withExecutionTrace('exec_wrap', 'chat.reply', {}, async () => {
       await aiSubpath.generateText({
-        model: new MockLanguageModelV4({ doGenerate: async () => textResult('hi') }),
+        model: new MockLanguageModelV4({
+          doGenerate: async () => textResult('hi'),
+        }),
         prompt: 'p',
       });
     });
@@ -384,12 +418,16 @@ describe("'aisdk-posthog/ai' drop-in wrappers with ai@7", () => {
     setDefaultTelemetry(inst);
 
     await aiSubpath.generateText({
-      model: new MockLanguageModelV4({ doGenerate: async () => textResult('hi') }),
+      model: new MockLanguageModelV4({
+        doGenerate: async () => textResult('hi'),
+      }),
       prompt: 'p',
       telemetry: { isEnabled: false },
     });
     await aiSubpath.generateText({
-      model: new MockLanguageModelV4({ doGenerate: async () => textResult('hi') }),
+      model: new MockLanguageModelV4({
+        doGenerate: async () => textResult('hi'),
+      }),
       prompt: 'p',
       experimental_telemetry: { isEnabled: false },
     });
@@ -444,7 +482,9 @@ describe("'aisdk-posthog/ai' drop-in wrappers with ai@7", () => {
     expect(toolSpan).toBeDefined();
 
     // Sub-agent's root hangs off the outer agent's tool execution span.
-    expect(innerAgent.properties.$ai_parent_id).toBe(toolSpan.properties.$ai_span_id);
+    expect(innerAgent.properties.$ai_parent_id).toBe(
+      toolSpan.properties.$ai_span_id,
+    );
     expect(toolSpan.properties.$ai_output_state).toBe('found cats');
 
     const subGeneration = byEvent('$ai_generation').find(
@@ -452,9 +492,12 @@ describe("'aisdk-posthog/ai' drop-in wrappers with ai@7", () => {
     )!;
     expect(subGeneration).toBeDefined();
     const subStep = captureCalls.find(
-      (c) => c.properties.$ai_span_id === subGeneration.properties.$ai_parent_id,
+      (c) =>
+        c.properties.$ai_span_id === subGeneration.properties.$ai_parent_id,
     )!;
-    expect(subStep.properties.$ai_parent_id).toBe(innerAgent.properties.$ai_span_id);
+    expect(subStep.properties.$ai_parent_id).toBe(
+      innerAgent.properties.$ai_span_id,
+    );
   });
 });
 
@@ -510,7 +553,9 @@ describe('review fixes', () => {
     setDefaultTelemetry(inst);
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     await aiSubpath.generateText({
-      model: new MockLanguageModelV4({ doGenerate: async () => textResult('hi') }),
+      model: new MockLanguageModelV4({
+        doGenerate: async () => textResult('hi'),
+      }),
       prompt: 'p',
       experimental_telemetry: { isEnabled: false },
     });
@@ -527,7 +572,12 @@ describe('review fixes', () => {
           ? ({
               content: [
                 { type: 'text', text: 'Let me check.' },
-                { type: 'tool-call', toolCallId: 'c', toolName: 'echo', input: '{"x":"a"}' },
+                {
+                  type: 'tool-call',
+                  toolCallId: 'c',
+                  toolName: 'echo',
+                  input: '{"x":"a"}',
+                },
               ],
               finishReason: { unified: 'tool-calls', raw: 'tc' },
               usage,
