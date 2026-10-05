@@ -1,20 +1,68 @@
-# aisdk-posthog
+<h1 align="center">aisdk-posthog</h1>
 
-PostHog LLM analytics integration for the [Vercel AI SDK](https://sdk.vercel.ai/), built on OpenTelemetry.
+<h4 align="center">PostHog LLM analytics for the Vercel AI SDK</h4>
 
-Maps the spans emitted by AI SDK v7's [`@ai-sdk/otel`](https://www.npmjs.com/package/@ai-sdk/otel) integration (`invoke_agent`, `chat`, `execute_tool`, ...) to PostHog LLM observability events: `$ai_trace`, `$ai_generation`, `$ai_span`. Requires `ai` ^7 (v6 users: stay on `aisdk-posthog@0.2.x`). Includes split input/output/total cost in USD via [`llm-info`](https://www.npmjs.com/package/llm-info), a deterministic execution-trace ID derived from your own ID, and a streaming-aware buffer that fixes parent-child span relationships when the AI SDK's `TransformStream` boundaries break OTel context propagation.
+<div align="center">
+  <a href="https://www.npmjs.com/package/aisdk-posthog"><img alt="npm version" src="https://img.shields.io/npm/v/aisdk-posthog"></a>
+  <a href="https://www.npmjs.com/package/aisdk-posthog"><img alt="npm downloads" src="https://img.shields.io/npm/dw/aisdk-posthog"></a>
+  <a href="./LICENSE"><img alt="License" src="https://img.shields.io/badge/License-Apache%202.0-blue.svg"></a>
+  <a href="https://github.com/orchlab/aisdk-posthog/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/orchlab/aisdk-posthog/actions/workflows/ci.yml/badge.svg"></a>
+</div>
+
+<div align="center">
+  <img alt="GitHub Issues" src="https://img.shields.io/github/issues/orchlab/aisdk-posthog">
+  <img alt="GitHub Pull Requests" src="https://img.shields.io/github/issues-pr/orchlab/aisdk-posthog">
+  <img alt="GitHub Stars" src="https://img.shields.io/github/stars/orchlab/aisdk-posthog">
+</div>
+
+`aisdk-posthog` sends [Vercel AI SDK](https://ai-sdk.dev/) telemetry to [PostHog LLM analytics](https://posthog.com/docs/llm-analytics): traces, generations, tool calls and agent steps, with token counts and cost. It is built on OpenTelemetry and was originally developed and battle-tested at [Orchestra](https://orch.so).
 
 > **Status: community-maintained.** Not an official PostHog SDK.
 
-## Install
+## Installation
 
 ```bash
 npm install aisdk-posthog ai @ai-sdk/otel
-# or
+```
+
+```bash
 pnpm add aisdk-posthog ai @ai-sdk/otel
 ```
 
+```bash
+yarn add aisdk-posthog ai @ai-sdk/otel
+```
+
 `ai` (>=7) and `@ai-sdk/otel` are required peer dependencies. Node 22.12+.
+
+## Version Compatibility
+
+| `aisdk-posthog` | `ai` (Vercel AI SDK) |
+| --------------- | -------------------- |
+| >= 0.3.0        | ^7                   |
+| 0.2.x           | ^6                   |
+
+## Quick start
+
+```ts
+import { generateText } from 'ai';
+import { createAISDKTelemetry } from 'aisdk-posthog';
+
+const telemetry = createAISDKTelemetry({
+  apiKey: process.env.POSTHOG_API_KEY!,
+  host: 'https://us.i.posthog.com', // or 'https://eu.i.posthog.com'
+});
+
+await generateText({
+  model,
+  prompt: 'Tell me a joke',
+  telemetry: telemetry.getTelemetry('joke', { userId: 'user_42' }),
+});
+
+await telemetry.flush(); // important in serverless, see below
+```
+
+Open **LLM analytics** in PostHog and the call shows up as a trace with a generation. To avoid repeating `telemetry:` on every call, see [Mode A](#mode-a--drop-in-subpath-zero-per-call-boilerplate).
 
 ## Two ways to use it
 
@@ -172,6 +220,66 @@ const traceUrl = `https://us.posthog.com/llm-observability/traces/${telemetry.to
 
 The `operationId` (second arg) is free-form — pick whatever name makes sense for your request type (`'chat.reply'`, `'ingest.batch'`, `'cron.daily-summary'`). The `executionUid` (first arg) should come from your own domain (HTTP request ID, queue job ID, message ID) so the same trace ID is reproducible without storage. Metadata keys (third arg) are stored verbatim on the span — pick names that won't collide with OTel/AI SDK semconv attributes (`ai.*`, `gen_ai.*`).
 
+## User context and groups
+
+`getContext` runs for every emitted span and decides who the event belongs to. Return `distinctId`, plus optional `groupType` / `groupId` ([PostHog groups](https://posthog.com/docs/product-analytics/group-analytics)), `sessionId` and extra `properties`:
+
+```ts
+const telemetry = createAISDKTelemetry({
+  apiKey: process.env.POSTHOG_API_KEY!,
+  getContext: ({ spanAttributes, executionUidByTraceId }) => {
+    const userId = spanAttributes['ai.telemetry.metadata.userId'] as
+      | string
+      | undefined;
+    if (!userId) return undefined; // attributed to 'system'
+    return {
+      distinctId: userId,
+      groupType: 'company',
+      groupId: String(spanAttributes['ai.telemetry.metadata.orgId']),
+      sessionId: executionUidByTraceId,
+    };
+  },
+});
+```
+
+Metadata passed to `getTelemetry(functionId, metadata)` is available on `spanAttributes` as `ai.telemetry.metadata.<key>`. If `getContext` returns `undefined`, the event is still emitted, attributed to `'system'`.
+
+## Serverless environments
+
+In serverless runtimes (AWS Lambda, Vercel Functions, Cloud Functions) the process can freeze right after the response, so flush before returning. `flushAt` defaults to `1`, which sends events immediately, but `flush()` makes sure they have left the process:
+
+```ts
+export async function handler(event) {
+  const result = await generateText({
+    model,
+    prompt,
+    telemetry: telemetry.getTelemetry('handler'),
+  });
+
+  await telemetry.flush(); // ensure events are sent
+  return Response.json(result);
+}
+
+// Long-running servers: drain on shutdown
+process.on('SIGTERM', async () => {
+  await telemetry.shutdown();
+  process.exit(0);
+});
+```
+
+## Privacy mode
+
+Set `privacyMode: true` to keep prompts and tool data out of PostHog:
+
+```ts
+const telemetry = createAISDKTelemetry({
+  apiKey: process.env.POSTHOG_API_KEY!,
+  privacyMode: true,
+});
+```
+
+`$ai_input`, `$ai_output_choices`, `$ai_input_state` and `$ai_output_state` are replaced with `'[REDACTED]'`. Everything else is still captured: model, provider, token counts, cost, latency and errors.
+
 ## Options
 
 | Option                         | Default                    | Notes                                                                                                                                                                                                                       |
@@ -186,7 +294,7 @@ The `operationId` (second arg) is free-form — pick whatever name makes sense f
 | `logger`                       | `console`                  | Structural `{ info, warn, error, debug }` interface.                                                                                                                                                                        |
 | `registerGlobalContextManager` | `true`                     | Installs `AsyncLocalStorageContextManager` as the global OTel context manager. Set to `false` if your app already wires one.                                                                                                |
 | `tracerName`                   | `aisdk-posthog`            | Surfaced via the OTel API.                                                                                                                                                                                                  |
-| `tracerVersion`                | `1.0.0`                    | Surfaced via the OTel API.                                                                                                                                                                                                  |
+| `tracerVersion`                | `1.0.0`                    | Version reported by the OTel tracer. Independent of this package's version.                                                                                                                                                                                                  |
 | `costCalculation`              | `'server'`                 | `'server'`: omit `$ai_*_cost_usd` fields and let PostHog enrich server-side from `$ai_model` + token counts (matches the official `@posthog/ai` wrappers). `'client'`: compute cost locally via `llm-info` and include it on the event. |
 
 ## Cost calculation
@@ -206,6 +314,8 @@ Per-event overrides are still possible regardless of mode — return `$ai_input_
 | `execute_tool`                                                      | `$ai_span` with `$ai_input_state` / `$ai_output_state`           |
 | `withExecutionTrace(...)` root                                      | `$ai_trace`                                                      |
 | `agent_step` (`step N`) and any other AI span (e.g. `embeddings`)   | `$ai_span`                                                       |
+
+All events include `$ai_framework` (`'aisdk'`), `$ai_trace_id`, `$ai_span_id`, `$ai_latency` and `$ai_is_error`.
 
 In `'client'` cost mode, `$ai_generation` events include `$ai_input_cost_usd`, `$ai_output_cost_usd`, `$ai_total_cost_usd` when the model is recognized by `llm-info`. Bedrock cross-region prefixes (`us.anthropic.claude-...`) and provider prefixes (`anthropic.claude-...`) are stripped before lookup. In the default `'server'` mode these fields are omitted and PostHog fills them in.
 
@@ -264,18 +374,39 @@ import {
 
 > `generateObject` and `streamObject` are deprecated and not re-exported by the subpath. Use `generateText({ output })` / `streamText({ output })` instead.
 
-## Testing
+## Troubleshooting
 
-```bash
-pnpm test
-```
+### Events not appearing in PostHog
 
-Tests mock `posthog-node` and run real `ai@7` calls (mock language models: `generateText`, `streamText`, tools, `ToolLoopAgent` + `subAgent`) through the exporter to assert the emitted event shape.
+1. Check that `POSTHOG_API_KEY` is set and that `enabled` is not `false`.
+2. Enable `debug: true` to see detailed logs.
+3. Call `telemetry.flush()` before the process exits (see [Serverless environments](#serverless-environments)).
+4. Check the host: `us.i.posthog.com` vs `eu.i.posthog.com`.
+5. Make sure the call actually passes `telemetry` (Mode B) or is imported from `aisdk-posthog/ai` with `setDefaultTelemetry` called (Mode A).
+6. Confirm `ai` is v7+ and `@ai-sdk/otel` is installed. v6 needs `aisdk-posthog@0.2.x`.
 
-## License
+### Missing user attribution
 
-Apache-2.0.
+1. Implement `getContext` and return a `distinctId`. Returning `undefined` attributes events to `'system'`.
+2. Pass the identifying value via `getTelemetry(functionId, metadata)` or `withExecutionTrace` so it is available on `spanAttributes`.
+
+### Broken parent-child spans or missing traces
+
+1. If your app already registers an OTel context manager, set `registerGlobalContextManager: false`.
+2. Wrap the request in `withExecutionTrace` so all calls share one trace.
+
+## Built & maintained by
+
+This package was built for internal use at [Orchestra](https://orch.so), the AI-native productivity platform. We open-sourced it to help the AI SDK community get better visibility into their LLM apps.
+
+Maintained by [Miro K](https://github.com/miro-ku) and the Orchestra team.
+
+Using Genkit instead? See [`genkitx-posthog`](https://github.com/orchlab/genkitx-posthog), the same idea for Firebase Genkit.
 
 ## Contributing
 
-See [CONTRIBUTING.md](./CONTRIBUTING.md). Runnable examples live in [`examples/`](./examples). Security issues: [SECURITY.md](./SECURITY.md).
+Contributions are welcome. See [CONTRIBUTING.md](./CONTRIBUTING.md). Runnable examples live in [`examples/`](./examples). Security issues: [SECURITY.md](./SECURITY.md).
+
+## License
+
+Apache-2.0. See [LICENSE](./LICENSE).

@@ -24,7 +24,10 @@
     "ai",
     "observability",
     "telemetry",
-    "opentelemetry"
+    "opentelemetry",
+    "llm-observability",
+    "llm-analytics",
+    "genai"
   ],
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
