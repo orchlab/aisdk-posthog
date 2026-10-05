@@ -1,5 +1,11 @@
 # aisdk-posthog
 
+## Unreleased
+
+### Documentation
+
+- README: badges, version compatibility table, quick start, user context and groups, serverless, privacy mode and troubleshooting sections.
+
 ## 0.3.0
 
 ### Minor Changes
