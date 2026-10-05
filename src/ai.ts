@@ -1,26 +1,27 @@
 /**
- * Drop-in `'ai'` replacement that auto-injects `experimental_telemetry`
+ * Drop-in `'ai'` replacement (AI SDK v7) that auto-injects `telemetry`
  * from the registered default telemetry instance.
  *
  * Use:
  *   import { generateText, streamText, ToolLoopAgent, tool } from 'aisdk-posthog/ai';
  *
  * Wired wrappers cover every supported AI SDK entry point that accepts
- * `experimental_telemetry`:
+ * `telemetry`:
  *   - functions: generateText, streamText, embed, embedMany
  *   - class: ToolLoopAgent
  *
- * `generateObject` and `streamObject` are deprecated in `ai` v6 — use
+ * `generateObject` and `streamObject` are deprecated — use
  * `generateText({ output })` / `streamText({ output })` instead. If you
  * need the deprecated names, import them from `'ai'` directly and thread
- * `experimental_telemetry` manually.
+ * `telemetry` manually.
  *
  * Pass-throughs (no telemetry concern, exported for import-source parity):
  *   - tool, wrapLanguageModel, stepCountIs, hasToolCall, toolModelMessageSchema
  *
  * Behavior:
- *   - If the caller supplies `experimental_telemetry`, it wins. The wrapper
- *     never overrides an explicit value.
+ *   - If the caller supplies `telemetry` (or the deprecated
+ *     `experimental_telemetry` alias), it wins. The wrapper never overrides
+ *     an explicit value.
  *   - If absent, the wrapper looks up the default instance via
  *     `getDefaultTelemetry()` and injects its config.
  *   - The functionId defaults in priority order:
@@ -38,7 +39,7 @@ import {
   generateText as aiGenerateText,
   streamText as aiStreamText,
 } from 'ai';
-import type { TelemetrySettings, ToolLoopAgentSettings, ToolSet } from 'ai';
+import type { TelemetryOptions, ToolLoopAgentSettings, ToolSet } from 'ai';
 
 import { getDefaultTelemetry } from './defaults';
 import { currentSubAgentName } from './subAgent';
@@ -49,20 +50,26 @@ import { currentSubAgentName } from './subAgent';
  * call site.
  */
 interface MaybeTelemetry {
-  experimental_telemetry?: TelemetrySettings;
+  telemetry?: TelemetryOptions<never, never>;
+  /** @deprecated v7 alias of `telemetry`. */
+  experimental_telemetry?: TelemetryOptions<never, never>;
 }
 
 /**
  * Resolves the telemetry config for an AI SDK call. If the caller already
  * supplied a value (any defined value, including an explicit
- * `{ isEnabled: false }`), we never override. The instance's
+ * `{ isEnabled: false }`, under either `telemetry` or the deprecated
+ * `experimental_telemetry`), we never override. The instance's
  * `getTelemetry()` returns an `AiSdkTelemetryConfig` which is structurally
- * a `TelemetrySettings` — TS widens automatically.
+ * a `TelemetryOptions` — TS widens automatically.
  */
 function resolveTelemetry(
   opts: MaybeTelemetry,
   fallbackFnId: string,
-): TelemetrySettings | undefined {
+): TelemetryOptions<never, never> | undefined {
+  if (opts.telemetry !== undefined) {
+    return opts.telemetry;
+  }
   if (opts.experimental_telemetry !== undefined) {
     return opts.experimental_telemetry;
   }
@@ -74,38 +81,47 @@ function resolveTelemetry(
   return inst.getTelemetry(fnId);
 }
 
+/**
+ * Drops the deprecated `experimental_telemetry` alias so the AI SDK never
+ * sees both keys; `resolveTelemetry` already folded its value into
+ * `telemetry`.
+ */
+function withoutLegacyTelemetry<T extends MaybeTelemetry>(opts: T): T {
+  const { experimental_telemetry: _legacy, ...rest } = opts;
+  return rest as T;
+}
+
 // ---------------------------------------------------------------------------
 // Function wrappers
 // ---------------------------------------------------------------------------
 
 export const generateText: typeof aiGenerateText = ((opts) =>
   aiGenerateText({
-    ...opts,
-    experimental_telemetry: resolveTelemetry(opts, 'generateText'),
+    ...withoutLegacyTelemetry(opts),
+    telemetry: resolveTelemetry(opts, 'generateText'),
   })) as typeof aiGenerateText;
 
 export const streamText: typeof aiStreamText = ((opts) =>
   aiStreamText({
-    ...opts,
-    experimental_telemetry: resolveTelemetry(opts, 'streamText'),
+    ...withoutLegacyTelemetry(opts),
+    telemetry: resolveTelemetry(opts, 'streamText'),
   })) as typeof aiStreamText;
 
-// Note: `generateObject` and `streamObject` are deprecated in `ai` v6
-// (use `generateText` / `streamText` with the `output` option). They are
-// not re-exported here. If you still need them, import from `'ai'`
-// directly and pass `experimental_telemetry: telemetry.getTelemetry(...)`
-// manually.
+// Note: `generateObject` and `streamObject` are deprecated (use
+// `generateText` / `streamText` with the `output` option). They are not
+// re-exported here. If you still need them, import from `'ai'` directly and
+// pass `telemetry: telemetry.getTelemetry(...)` manually.
 
 export const embed: typeof aiEmbed = ((opts) =>
   aiEmbed({
-    ...opts,
-    experimental_telemetry: resolveTelemetry(opts, 'embed'),
+    ...withoutLegacyTelemetry(opts),
+    telemetry: resolveTelemetry(opts, 'embed'),
   })) as typeof aiEmbed;
 
 export const embedMany: typeof aiEmbedMany = ((opts) =>
   aiEmbedMany({
-    ...opts,
-    experimental_telemetry: resolveTelemetry(opts, 'embedMany'),
+    ...withoutLegacyTelemetry(opts),
+    telemetry: resolveTelemetry(opts, 'embedMany'),
   })) as typeof aiEmbedMany;
 
 // ---------------------------------------------------------------------------
@@ -114,8 +130,8 @@ export const embedMany: typeof aiEmbedMany = ((opts) =>
 
 /**
  * `ToolLoopAgent` — drop-in replacement for `'ai'`'s class. The runtime
- * constructor auto-injects `experimental_telemetry` from the registered
- * default; if the caller already supplied one, that value wins.
+ * constructor auto-injects `telemetry` from the registered default; if the
+ * caller already supplied one, that value wins.
  *
  * Type preservation: the exported value is typed as `typeof AIToolLoopAgent`
  * so `new ToolLoopAgent<MyOpts, MyTools>(...)` keeps user-side generics.
@@ -129,11 +145,8 @@ export const embedMany: typeof aiEmbedMany = ((opts) =>
 class WrappedToolLoopAgent extends AIToolLoopAgent {
   constructor(settings: ToolLoopAgentSettings) {
     super({
-      ...settings,
-      experimental_telemetry:
-        settings.experimental_telemetry !== undefined
-          ? settings.experimental_telemetry
-          : resolveTelemetry(settings, 'tool-loop-agent'),
+      ...withoutLegacyTelemetry(settings),
+      telemetry: resolveTelemetry(settings, 'tool-loop-agent'),
     });
   }
 }
@@ -162,7 +175,7 @@ export type {
   GenerateTextResult,
   ModelMessage,
   StreamTextResult,
-  TelemetrySettings,
+  TelemetryOptions,
   Tool,
   ToolCallPart,
   ToolResultPart,

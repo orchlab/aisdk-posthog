@@ -26,12 +26,15 @@ export class ErrorLoggingSpanProcessor implements SpanProcessor {
       return;
     }
 
-    const operationId = span.attributes['ai.operationId'] as string | undefined;
+    // v7 spans carry `gen_ai.operation.name`; spans from withExecutionTrace
+    // carry `ai.operationId`.
+    const operationId = (span.attributes['gen_ai.operation.name'] ??
+      span.attributes['ai.operationId']) as string | undefined;
     if (!operationId) {
       return;
     }
 
-    const toolName = span.attributes['ai.toolCall.name'] as string | undefined;
+    const toolName = span.attributes['gen_ai.tool.name'] as string | undefined;
     const errorMessage = span.status.message || 'Unknown error';
 
     if (toolName) {

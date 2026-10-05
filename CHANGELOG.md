@@ -1,5 +1,45 @@
 # aisdk-posthog
 
+## 0.3.0
+
+### Minor Changes
+
+- **AI SDK v7 support (breaking).** `ai` v7 removed the built-in
+  OpenTelemetry and ignores `metadata` / `tracer` in its telemetry options,
+  which silently stopped PostHog traces. This release targets `ai` ^7 and
+  `@ai-sdk/otel` and **drops `ai` v6 support** (stay on `0.2.x` for v6).
+
+  - `getTelemetry()` now returns `{ isEnabled, functionId, integrations }`
+    where `integrations` is a per-call `new OpenTelemetry({ tracer })` from
+    `@ai-sdk/otel`. No global `registerTelemetry()` needed. Pass it as
+    `telemetry:` (`experimental_telemetry` is a deprecated alias in v7).
+    `AiSdkTelemetryConfig` changed accordingly (`metadata` / `tracer`
+    removed, `integrations` added).
+  - Metadata is re-attached to every span via `enrichSpan` as
+    `ai.telemetry.metadata.<key>`, so `getContext` resolvers and
+    `executionUid` attribution keep working unchanged.
+  - The exporter maps the v7 GenAI span attributes: `invoke_agent` ->
+    `$ai_trace`, `chat` -> `$ai_generation`, `execute_tool` -> `$ai_span`,
+    `agent_step` / others -> `$ai_span`. The v6 `ai.*` attribute mapping is
+    gone. Input/output messages are converted from GenAI message parts to
+    PostHog `{ role, content }`.
+  - New: each agent step is reported as a `$ai_span` (`step N`);
+    `$ai_cache_creation_input_tokens` is emitted when reported.
+  - `aisdk-posthog/ai` wrappers inject `telemetry` (and honor an explicit
+    `telemetry` or `experimental_telemetry`). `TelemetrySettings` type
+    re-export replaced by `TelemetryOptions`.
+  - The instance now exposes `tracer`.
+  - Peer dependencies are now `ai >=7.0.0` and `@ai-sdk/otel >=1.0.0`, both
+    required (install them alongside; their versions track each other). The
+    `ai` peer is no longer optional because the factory loads
+    `@ai-sdk/otel` at runtime.
+  - **Breaking:** `engines.node` is now `>=22.12` (AI SDK 7 needs 22; 22.12 is the first release where the CJS entry can `require()` the ESM-only `@ai-sdk/otel`).
+  - The resolver also sees `ai.telemetry.functionId` on every span.
+  - Known limitation: `$ai_stream` is inferred from the presence of a time
+    to first chunk, so a stream that errors before its first chunk is
+    reported as non-streaming. `embeddings` spans are `$ai_span` events
+    carrying token usage, not `$ai_embedding` events.
+
 ## 0.2.1
 
 ### Patch Changes
