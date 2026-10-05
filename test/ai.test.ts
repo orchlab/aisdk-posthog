@@ -1,8 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { setDefaultTelemetry } from './defaults';
-import { createAISDKTelemetry } from './factory';
-import { subAgent } from './subAgent';
+import { setDefaultTelemetry } from '../src/defaults';
+import { createAISDKTelemetry } from '../src/factory';
 
 // Capture every PostHog `capture` call across the suite.
 const captureCalls: Array<{
@@ -37,7 +36,7 @@ describe('setDefaultTelemetry / getDefaultTelemetry', () => {
     });
     setDefaultTelemetry(inst);
 
-    const { getDefaultTelemetry } = await import('./defaults');
+    const { getDefaultTelemetry } = await import('../src/defaults');
     expect(getDefaultTelemetry()).toBe(inst);
   });
 
@@ -53,7 +52,7 @@ describe('setDefaultTelemetry / getDefaultTelemetry', () => {
       return inst;
     });
 
-    const { getDefaultTelemetry } = await import('./defaults');
+    const { getDefaultTelemetry } = await import('../src/defaults');
     getDefaultTelemetry();
     getDefaultTelemetry();
     expect(resolverCalls).toBe(2);
@@ -68,7 +67,7 @@ describe('setDefaultTelemetry / getDefaultTelemetry', () => {
     setDefaultTelemetry(inst);
     setDefaultTelemetry(undefined);
 
-    const { getDefaultTelemetry } = await import('./defaults');
+    const { getDefaultTelemetry } = await import('../src/defaults');
     expect(getDefaultTelemetry()).toBeUndefined();
   });
 });
@@ -85,8 +84,8 @@ describe("'aisdk-posthog/ai' subpath", () => {
   });
 
   it('auto-injects telemetry when caller omits it', async () => {
-    const ai = await import('./ai');
-    const { getDefaultTelemetry } = await import('./defaults');
+    const ai = await import('../src/ai');
+    const { getDefaultTelemetry } = await import('../src/defaults');
     const inst = getDefaultTelemetry()!;
 
     await inst.withExecutionTrace('exec_1', 'chat.reply', {}, async () => {
@@ -129,7 +128,7 @@ describe("'aisdk-posthog/ai' subpath", () => {
 describe('subAgent wrapper', () => {
   it('sets currentSubAgentName for the duration of execute', async () => {
     const { subAgent: subAgentFn, currentSubAgentName } =
-      await import('./subAgent');
+      await import('../src/subAgent');
 
     let observed: string | undefined;
     const t = subAgentFn('research', {
@@ -147,7 +146,7 @@ describe('subAgent wrapper', () => {
 
   it('nested subAgent: innermost name wins', async () => {
     const { subAgent: subAgentFn, currentSubAgentName } =
-      await import('./subAgent');
+      await import('../src/subAgent');
 
     const observations: string[] = [];
     const inner = subAgentFn('inner', {
@@ -171,7 +170,7 @@ describe('subAgent wrapper', () => {
   });
 
   it('passes through tool definitions without execute (LLM-side tools)', async () => {
-    const { subAgent: subAgentFn } = await import('./subAgent');
+    const { subAgent: subAgentFn } = await import('../src/subAgent');
     const t = subAgentFn('thinker', { description: 'no execute here' });
     expect(t).toEqual({ description: 'no execute here' });
   });
@@ -181,7 +180,7 @@ describe('subAgent wrapper', () => {
     // constructor merges telemetry. We can't execute a real generation
     // without a model, but we can verify the wrapped class exists and
     // accepts the upstream settings shape.
-    const ai = await import('./ai');
+    const ai = await import('../src/ai');
     expect(typeof ai.ToolLoopAgent).toBe('function');
     expect(ai.ToolLoopAgent.prototype).toBeDefined();
   });

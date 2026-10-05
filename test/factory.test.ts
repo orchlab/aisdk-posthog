@@ -1,11 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { createAISDKTelemetry } from './factory';
+import { createAISDKTelemetry } from '../src/factory';
 
 // Capture every PostHog `capture` call across the suite. Mocking the module
 // means our factory's `new PostHog(...)` returns the stub regardless of
 // where it's instantiated. `vi.mock` is hoisted by vitest above all imports
-// at compile time, so the mock applies before `./factory` loads `posthog-node`.
+// at compile time, so the mock applies before `../src/factory` loads `posthog-node`.
 const captureCalls: Array<{
   distinctId: string;
   event: string;
@@ -192,7 +192,7 @@ describe('createAISDKTelemetry', () => {
           'chat.reply',
           {},
           async () => {
-            const cfg = inst.getTelemetry('fn');
+            inst.getTelemetry('fn');
             await inst.tracer.startActiveSpan(
               'execute_tool searchEmails',
               {
