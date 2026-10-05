@@ -2,19 +2,19 @@
 
 PostHog LLM analytics integration for the [Vercel AI SDK](https://sdk.vercel.ai/), built on OpenTelemetry.
 
-Maps the AI SDK's `experimental_telemetry` spans (`ai.generateText`, `ai.streamText`, `ai.toolCall`, `ai.embed`, ...) to PostHog LLM observability events: `$ai_trace`, `$ai_generation`, `$ai_span`. Includes split input/output/total cost in USD via [`llm-info`](https://www.npmjs.com/package/llm-info), a deterministic execution-trace ID derived from your own ID, and a streaming-aware buffer that fixes parent-child span relationships when the AI SDK's `TransformStream` boundaries break OTel context propagation.
+Maps the spans emitted by AI SDK v7's [`@ai-sdk/otel`](https://www.npmjs.com/package/@ai-sdk/otel) integration (`invoke_agent`, `chat`, `execute_tool`, ...) to PostHog LLM observability events: `$ai_trace`, `$ai_generation`, `$ai_span`. Requires `ai` ^7 (v6 users: stay on `aisdk-posthog@0.2.x`). Includes split input/output/total cost in USD via [`llm-info`](https://www.npmjs.com/package/llm-info), a deterministic execution-trace ID derived from your own ID, and a streaming-aware buffer that fixes parent-child span relationships when the AI SDK's `TransformStream` boundaries break OTel context propagation.
 
 > **Status: community-maintained.** Not an official PostHog SDK.
 
 ## Install
 
 ```bash
-npm install aisdk-posthog
+npm install aisdk-posthog ai @ai-sdk/otel
 # or
-pnpm add aisdk-posthog
+pnpm add aisdk-posthog ai @ai-sdk/otel
 ```
 
-`ai` is an optional peer dependency. You only need it installed if you use the drop-in `'aisdk-posthog/ai'` subpath.
+`ai` (>=7) and `@ai-sdk/otel` are required peer dependencies. Node 22.12+.
 
 ## Two ways to use it
 
@@ -64,7 +64,7 @@ If `setDefaultTelemetry` is never called or telemetry is disabled, the wrappers 
 
 ### Mode B — per-call embedding (explicit, no globals)
 
-Hold the instance and pass `experimental_telemetry: telemetry.getTelemetry(...)` per call. No subpath, no module-level state. Use this when you want fine-grained control over `functionId` per call site.
+Hold the instance and pass `telemetry: telemetry.getTelemetry(...)` per call. No subpath, no module-level state. Use this when you want fine-grained control over `functionId` per call site.
 
 ```ts
 import { generateText } from 'ai';
@@ -73,7 +73,7 @@ import { telemetry } from './boot';
 await generateText({
   model,
   prompt,
-  experimental_telemetry: telemetry.getTelemetry('chat-reply', {
+  telemetry: telemetry.getTelemetry('chat-reply', {
     executionUid,
   }),
 });
@@ -81,7 +81,7 @@ await generateText({
 
 ### Mixing modes
 
-Both modes coexist. Caller-supplied `experimental_telemetry` always wins over the auto-injected default, so you can use the subpath everywhere and override per call when you want a custom `functionId`:
+Both modes coexist. Caller-supplied `telemetry` (or the deprecated `experimental_telemetry` alias) always wins over the auto-injected default, so you can use the subpath everywhere and override per call when you want a custom `functionId`:
 
 ```ts
 import { generateText } from 'aisdk-posthog/ai';
@@ -94,7 +94,7 @@ await generateText({ model, prompt });
 await generateText({
   model,
   prompt,
-  experimental_telemetry: telemetry.getTelemetry('special-case'),
+  telemetry: telemetry.getTelemetry('special-case'),
 });
 ```
 
@@ -137,7 +137,7 @@ tools: {
     execute: async ({ topic }, { abortSignal }) => {
       return generateText({
         model, prompt: `Research: ${topic}`,
-        experimental_telemetry: telemetry.getTelemetry(
+        telemetry: telemetry.getTelemetry(
           currentSubAgentName() ?? 'fallback',
         ),
         abortSignal,
@@ -201,17 +201,29 @@ Per-event overrides are still possible regardless of mode — return `$ai_input_
 
 | AI SDK operation                                                    | PostHog event                                                    |
 | ------------------------------------------------------------------- | ---------------------------------------------------------------- |
-| `ai.generateText`, `ai.streamText` (outer span)                     | `$ai_trace` (or `$ai_span` when wrapped in `withExecutionTrace`) |
-| `ai.generateText.doGenerate`, `ai.streamText.doStream` (inner span) | `$ai_generation` (token counts, model parameters; cost is filled in by PostHog server-side or computed client-side, see [Cost calculation](#cost-calculation)) |
-| `ai.toolCall`                                                       | `$ai_span` with `$ai_input_state` / `$ai_output_state`           |
+| `invoke_agent` (generateText / streamText / ToolLoopAgent root span) | `$ai_trace` (or `$ai_span` when wrapped in `withExecutionTrace`) |
+| `chat` (one model call per step)                                    | `$ai_generation` (token counts, model parameters; cost is filled in by PostHog server-side or computed client-side, see [Cost calculation](#cost-calculation)) |
+| `execute_tool`                                                      | `$ai_span` with `$ai_input_state` / `$ai_output_state`           |
 | `withExecutionTrace(...)` root                                      | `$ai_trace`                                                      |
-| Any other `ai.operationId` (e.g. `ai.embed`)                        | `$ai_span`                                                       |
+| `agent_step` (`step N`) and any other AI span (e.g. `embeddings`)   | `$ai_span`                                                       |
 
 In `'client'` cost mode, `$ai_generation` events include `$ai_input_cost_usd`, `$ai_output_cost_usd`, `$ai_total_cost_usd` when the model is recognized by `llm-info`. Bedrock cross-region prefixes (`us.anthropic.claude-...`) and provider prefixes (`anthropic.claude-...`) are stripped before lookup. In the default `'server'` mode these fields are omitted and PostHog fills them in.
 
+## AI SDK v7 notes
+
+`ai` v7 removed the built-in OpenTelemetry. `getTelemetry()` therefore returns `{ isEnabled, functionId, integrations: [new OpenTelemetry({ tracer, ... })] }`: a per-call `@ai-sdk/otel` integration bound to this instance's tracer. Per-call integrations take precedence over globally registered ones, so there is no `registerTelemetry()` call and telemetry stays opt-in per call.
+
+- v7 dropped `metadata` from the telemetry options. Metadata passed to `getTelemetry(fnId, metadata)` is re-attached to every span of the call (agent, step, generation, tool) via `enrichSpan` as `ai.telemetry.metadata.<key>`, the same attribute names as v6, so existing `getContext` resolvers keep working.
+- Inside `withExecutionTrace`, spans share the execution's trace id, and the resolver also receives `executionUidByTraceId`.
+- `functionId` becomes `gen_ai.agent.name` and is used as the span name of the `invoke_agent` span (`$ai_span_name`).
+- There is a new `agent_step` span per step (`step 1`, `step 2`, ...), reported as `$ai_span`. Generations and tool spans are parented to their step.
+- `$ai_stream` is derived from the presence of a time to first chunk; `$ai_time_to_first_token` is in seconds.
+- `$ai_provider` is now the GenAI provider name (`openai`, not `openai.chat`).
+- Pass `telemetry`, not `experimental_telemetry` (deprecated alias in v7; the `aisdk-posthog/ai` wrappers accept both).
+
 ## Streaming and parent-child spans
 
-The Vercel AI SDK's streaming path uses `TransformStream`s, which break OpenTelemetry's `AsyncLocalStorage`-based context propagation. The exporter buffers child spans (`doStream`, `toolCall`) per traceId until the wrapping execution span ends, then re-parents them under the right `ai.streamText` span using **temporal containment** (start-time inside the parent's start/end window). When OTel propagation worked correctly, the original parent is preserved — temporal containment is only used as a fallback.
+The Vercel AI SDK's streaming path uses `TransformStream`s, which break OpenTelemetry's `AsyncLocalStorage`-based context propagation. The exporter buffers child spans (`chat`, `execute_tool`) per traceId until the wrapping execution span ends, then re-parents them under the right `invoke_agent` / `step` span using **temporal containment** (start-time inside the parent's start/end window). When OTel propagation worked correctly, the original parent is preserved — temporal containment is only used as a fallback.
 
 ## Public API
 
@@ -223,6 +235,8 @@ toOtelTraceId(executionUid): string
 // Convenience layer (for the drop-in subpath)
 setDefaultTelemetry(instance | resolverFn | undefined): void
 getDefaultTelemetry(): AISDKTelemetryInstance | undefined
+
+// The instance also exposes `tracer` (for custom spans)
 
 // Sub-agent helper
 subAgent(name, tool): tool
@@ -248,7 +262,7 @@ import {
 } from 'aisdk-posthog/ai';
 ```
 
-> `generateObject` and `streamObject` are deprecated in `ai` v6 and not re-exported by the subpath. Use `generateText({ output })` / `streamText({ output })` instead.
+> `generateObject` and `streamObject` are deprecated and not re-exported by the subpath. Use `generateText({ output })` / `streamText({ output })` instead.
 
 ## Testing
 
@@ -256,7 +270,7 @@ import {
 pnpm test
 ```
 
-Tests mock `posthog-node` and feed synthetic spans through the exporter to assert the emitted event shape.
+Tests mock `posthog-node` and run real `ai@7` calls (mock language models: `generateText`, `streamText`, tools, `ToolLoopAgent` + `subAgent`) through the exporter to assert the emitted event shape.
 
 ## License
 

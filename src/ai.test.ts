@@ -84,7 +84,7 @@ describe("'aisdk-posthog/ai' subpath", () => {
     setDefaultTelemetry(inst);
   });
 
-  it('auto-injects experimental_telemetry when caller omits it', async () => {
+  it('auto-injects telemetry when caller omits it', async () => {
     const ai = await import('./ai');
     const { getDefaultTelemetry } = await import('./defaults');
     const inst = getDefaultTelemetry()!;
@@ -96,14 +96,14 @@ describe("'aisdk-posthog/ai' subpath", () => {
       // Use the wrapped tracer to start a span as if generateText were called.
       // (We can't actually call ai.generateText here because we'd need a
       // model. Instead, we exercise the resolver path directly.)
-      await cfg!.tracer.startActiveSpan(
-        'ai.generateText.doGenerate',
+      await inst.tracer.startActiveSpan(
+        'chat test-model',
         {
           attributes: {
-            'ai.operationId': 'ai.generateText.doGenerate',
-            'ai.model.id': 'test-model',
-            'ai.usage.inputTokens': 5,
-            'ai.usage.outputTokens': 3,
+            'gen_ai.operation.name': 'chat',
+            'gen_ai.request.model': 'test-model',
+            'gen_ai.usage.input_tokens': 5,
+            'gen_ai.usage.output_tokens': 3,
           },
         },
         (span) => span.end(),

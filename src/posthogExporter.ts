@@ -1,17 +1,22 @@
 /**
- * PostHog Span Exporter for Vercel AI SDK
+ * PostHog Span Exporter for Vercel AI SDK (v7+)
  *
- * Maps AI SDK OpenTelemetry spans to PostHog LLM analytics events.
- * AI SDK emits spans with `ai.*` prefixed attributes when
- * `experimental_telemetry` is enabled on generateText/streamText calls.
+ * Maps the OpenTelemetry spans emitted by `@ai-sdk/otel` (the `OpenTelemetry`
+ * telemetry integration of `ai` v7) to PostHog LLM analytics events. Spans
+ * carry OTel GenAI semantic-convention attributes (`gen_ai.*`), plus a few
+ * `ai.*` extras when the integration enables supplemental attributes.
  *
- * Span mapping:
- * - `ai.generateText` / `ai.streamText` (outer)      -> `$ai_trace`
- * - `ai.generateText.doGenerate` / `ai.streamText.doStream` -> `$ai_generation`
- * - `ai.generateObject` / `ai.streamObject` (outer)   -> `$ai_trace`
- * - `ai.generateObject.doGenerate` / `ai.streamObject.doStream` -> `$ai_generation`
- * - `ai.toolCall`                                      -> `$ai_span` (tool)
- * - Other `ai.*` spans                                 -> `$ai_span`
+ * Span mapping (keyed on `gen_ai.operation.name`):
+ * - `invoke_agent`  (generateText / streamText / generateObject / ToolLoopAgent
+ *   root span)                                      -> `$ai_trace`
+ * - `chat`          (one model call, per step)      -> `$ai_generation`
+ * - `execute_tool`  (tool execution)                -> `$ai_span` (tool)
+ * - `agent_step` and everything else (embeddings…)  -> `$ai_span`
+ * - spans created by `withExecutionTrace`           -> `$ai_trace` / `$ai_span`
+ *
+ * Custom metadata passed to `getTelemetry(fnId, metadata)` is stamped on every
+ * span as `ai.telemetry.metadata.<key>` (same keys as AI SDK v6), so
+ * `getContext` resolvers keep working unchanged.
  */
 
 import type { Attributes } from '@opentelemetry/api';
@@ -99,23 +104,31 @@ export interface PostHogAISdkExporterOptions {
 
 const REDACTED = '[REDACTED]';
 
-/** AI SDK operation IDs that represent outer/trace-level spans */
-const TRACE_OPERATIONS = new Set([
-  'ai.generateText',
-  'ai.streamText',
-  'ai.generateObject',
-  'ai.streamObject',
-]);
+type SpanKindName = 'execution' | 'trace' | 'step' | 'generation' | 'tool' | 'other';
 
-/** AI SDK operation IDs that represent inner/generation-level spans */
-const GENERATION_OPERATIONS = new Set([
-  'ai.generateText.doGenerate',
-  'ai.streamText.doStream',
-  'ai.generateObject.doGenerate',
-  'ai.streamObject.doStream',
-]);
-
-const TOOL_OPERATION = 'ai.toolCall';
+/**
+ * Classifies a span. Returns undefined for spans that are not AI SDK /
+ * execution spans (they are ignored).
+ */
+function classifySpan(attrs: Attributes): SpanKindName | undefined {
+  if (getAttr(attrs, EXECUTION_SPAN_ATTR) === 'true') {
+    return 'execution';
+  }
+  switch (getAttr(attrs, 'gen_ai.operation.name')) {
+    case undefined:
+      return undefined;
+    case 'invoke_agent':
+      return 'trace';
+    case 'agent_step':
+      return 'step';
+    case 'chat':
+      return 'generation';
+    case 'execute_tool':
+      return 'tool';
+    default:
+      return 'other';
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -147,6 +160,138 @@ function safeParse(json: string | undefined): unknown {
   } catch {
     return undefined;
   }
+}
+
+/** A part of a `gen_ai.*.messages` message (OTel GenAI semconv). */
+interface GenAiPart {
+  type?: string;
+  content?: unknown;
+  id?: string | null;
+  name?: string;
+  arguments?: unknown;
+  response?: unknown;
+  mime_type?: string;
+  modality?: string;
+  uri?: string;
+}
+
+interface GenAiMessage {
+  role?: string;
+  parts?: GenAiPart[];
+}
+
+function parseMessages(raw: string | undefined): GenAiMessage[] | undefined {
+  const parsed = safeParse(raw);
+  return Array.isArray(parsed) ? (parsed as GenAiMessage[]) : undefined;
+}
+
+function textOf(parts: GenAiPart[] | undefined): string {
+  return (parts ?? [])
+    .filter((p) => p.type === 'text')
+    .map((p) => String(p.content ?? ''))
+    .join('');
+}
+
+/**
+ * Converts one GenAI-semconv part into a PostHog content block. Binary
+ * payloads are dropped (large and not useful in analytics).
+ */
+function convertPart(part: GenAiPart): Record<string, unknown> {
+  switch (part.type) {
+    case 'text':
+      return { type: 'text', text: part.content };
+    case 'reasoning':
+      return { type: 'reasoning', text: part.content };
+    case 'tool_call':
+      return {
+        type: 'tool-call',
+        id: part.id ?? '',
+        function: { name: part.name ?? 'unknown', arguments: part.arguments },
+      };
+    case 'tool_call_response':
+      return {
+        type: 'tool-result',
+        id: part.id ?? '',
+        result: part.response,
+      };
+    case 'blob':
+      return { type: 'blob', mime_type: part.mime_type, modality: part.modality };
+    case 'uri':
+      return { type: 'uri', uri: part.uri, mime_type: part.mime_type };
+    default:
+      return { type: String(part.type) };
+  }
+}
+
+/**
+ * Converts GenAI-semconv messages to PostHog `{ role, content }` messages.
+ * Text-only messages collapse to a plain string; anything else becomes an
+ * array of content blocks.
+ */
+function convertMessages(messages: GenAiMessage[]): unknown[] {
+  return messages.map((msg) => {
+    const parts = msg.parts ?? [];
+    const textOnly = parts.every((p) => p.type === 'text');
+    return {
+      role: msg.role ?? 'user',
+      content: textOnly ? textOf(parts) : parts.map(convertPart),
+    };
+  });
+}
+
+function numAttrSum(
+  attrs: Attributes,
+  ...keys: string[]
+): number | undefined {
+  const values = keys.map((k) => getNumAttr(attrs, k));
+  const defined = values.filter((v): v is number => v !== undefined);
+  return defined.length > 0 ? defined.reduce((a, b) => a + b, 0) : undefined;
+}
+
+/** Token usage shared by `invoke_agent` and `chat` spans. */
+function usageProps(attrs: Attributes): Record<string, unknown> {
+  const inputTokens = getNumAttr(attrs, 'gen_ai.usage.input_tokens');
+  const outputTokens = getNumAttr(attrs, 'gen_ai.usage.output_tokens');
+  const reasoningTokens = getNumAttr(
+    attrs,
+    'ai.usage.outputTokenDetails.reasoningTokens',
+  );
+  const cachedInputTokens = getNumAttr(
+    attrs,
+    'gen_ai.usage.cache_read.input_tokens',
+  );
+  const cacheWriteTokens = getNumAttr(
+    attrs,
+    'gen_ai.usage.cache_creation.input_tokens',
+  );
+  const totalTokens = numAttrSum(
+    attrs,
+    'gen_ai.usage.input_tokens',
+    'gen_ai.usage.output_tokens',
+  );
+  return {
+    ...(inputTokens !== undefined && { $ai_input_tokens: inputTokens }),
+    ...(outputTokens !== undefined && { $ai_output_tokens: outputTokens }),
+    ...(totalTokens !== undefined && { $ai_total_tokens: totalTokens }),
+    ...(reasoningTokens !== undefined && {
+      $ai_reasoning_tokens: reasoningTokens,
+    }),
+    ...(cachedInputTokens !== undefined && {
+      $ai_cache_read_input_tokens: cachedInputTokens,
+    }),
+    ...(cacheWriteTokens !== undefined && {
+      $ai_cache_creation_input_tokens: cacheWriteTokens,
+    }),
+  };
+}
+
+/** First entry of `gen_ai.response.finish_reasons` (a string array). */
+function finishReason(attrs: Attributes): string | undefined {
+  const raw = attrs['gen_ai.response.finish_reasons'];
+  if (Array.isArray(raw)) {
+    return raw.length > 0 ? String(raw[0]) : undefined;
+  }
+  return raw === undefined || raw === null ? undefined : String(raw);
 }
 
 /**
@@ -226,8 +371,7 @@ export class PostHogAISdkExporter implements SpanExporter {
     for (const span of spans) {
       this.extractAndCacheContext(span);
 
-      const operationId = getAttr(span.attributes, 'ai.operationId');
-      if (!operationId) {
+      if (!classifySpan(span.attributes)) {
         continue;
       }
 
@@ -295,48 +439,50 @@ export class PostHogAISdkExporter implements SpanExporter {
     const buffered = this.pendingSpans.get(traceId) || [];
     this.pendingSpans.delete(traceId);
 
-    // Collect TRACE_OPERATIONS spans (ai.streamText, etc.) with time ranges.
+    // Collect container spans (invoke_agent + agent_step) with time ranges.
     // These are the intermediate parents we want to restore.
-    const traceOpSpans: {
+    const containers: {
       spanId: string;
       startMs: number;
       endMs: number;
     }[] = [];
-    const traceOpSpanIds = new Set<string>();
+    // Spans whose OTel parent link is trustworthy: containers, and generic
+    // spans (e.g. an `embeddings` root with child spans).
+    const trustedParentIds = new Set<string>();
 
     for (const span of buffered) {
-      const opId = getAttr(span.attributes, 'ai.operationId') || '';
-      if (TRACE_OPERATIONS.has(opId)) {
-        const spanId = span.spanContext().spanId;
-        traceOpSpans.push({
+      const spanId = span.spanContext().spanId;
+      const kind = classifySpan(span.attributes);
+      if (kind === 'trace' || kind === 'step' || kind === 'other') {
+        trustedParentIds.add(spanId);
+      }
+      if (kind === 'trace' || kind === 'step') {
+        containers.push({
           spanId,
           startMs: hrTimeToMilliseconds(span.startTime),
           endMs: hrTimeToMilliseconds(span.endTime),
         });
-        traceOpSpanIds.add(spanId);
       }
     }
 
     // Build a parentId override map for spans whose OTel parent was broken
     // by streaming (TransformStream boundaries lose async context).
     //
-    // Trust the actual OTel parent when it points to a known traceOp span —
-    // this is critical for parallel sub-agents where temporal containment
-    // would match the wrong parent due to overlapping time ranges.
+    // Trust the actual OTel parent when it points to a container (or generic)
+    // span — this is critical for parallel sub-agents where temporal containment would
+    // match the wrong parent due to overlapping time ranges.
     const parentOverrides = new Map<string, string>();
 
     for (const span of buffered) {
-      const opId = getAttr(span.attributes, 'ai.operationId') || '';
-      const isExecSpan =
-        getAttr(span.attributes, EXECUTION_SPAN_ATTR) === 'true';
-      if (TRACE_OPERATIONS.has(opId) || isExecSpan) {
+      const kind = classifySpan(span.attributes);
+      if (kind === 'trace' || kind === 'step' || kind === 'execution') {
         continue; // Only re-parent generation / tool / generic spans
       }
 
-      // If the span already has a valid parent pointing to a traceOp span,
+      // If the span already has a valid parent pointing to a trusted span,
       // the OTel context propagation worked — no override needed.
       const actualParentId = span.parentSpanContext?.spanId;
-      if (actualParentId && traceOpSpanIds.has(actualParentId)) {
+      if (actualParentId && trustedParentIds.has(actualParentId)) {
         continue;
       }
 
@@ -344,7 +490,7 @@ export class PostHogAISdkExporter implements SpanExporter {
       const spanStartMs = hrTimeToMilliseconds(span.startTime);
       let bestParent: string | undefined;
       let bestDuration = Infinity;
-      for (const top of traceOpSpans) {
+      for (const top of containers) {
         if (spanStartMs >= top.startMs && spanStartMs <= top.endMs) {
           const duration = top.endMs - top.startMs;
           if (duration < bestDuration) {
@@ -429,10 +575,10 @@ export class PostHogAISdkExporter implements SpanExporter {
     span: ReadableSpan,
     parentOverrides?: Map<string, string>,
   ): void {
-    const operationId = getAttr(span.attributes, 'ai.operationId');
+    const kind = classifySpan(span.attributes);
 
-    // Only process AI SDK spans (those with ai.operationId)
-    if (!operationId) {
+    // Only process AI SDK / execution spans
+    if (!kind) {
       return;
     }
 
@@ -441,27 +587,33 @@ export class PostHogAISdkExporter implements SpanExporter {
     // Use span start time as event timestamp so PostHog orders events chronologically
     const timestamp = new Date(hrTimeToMilliseconds(span.startTime));
 
-    if (TRACE_OPERATIONS.has(operationId)) {
-      const underExecution = this.options.hasExecutionTrace?.(
-        span.spanContext().traceId,
-      );
-      if (underExecution) {
-        // Already nested under a withExecutionTrace — demote to a plain
-        // span so it doesn't create a duplicate $ai_trace.
-        this.reportSpan(span, baseProps, context, timestamp);
-      } else {
-        // Standalone AI SDK call (no execution wrapper) — keep as trace.
-        this.reportTrace(span, baseProps, context, timestamp);
+    switch (kind) {
+      case 'execution':
+        this.reportExecutionTrace(span, baseProps, context, timestamp);
+        break;
+      case 'trace': {
+        const underExecution = this.options.hasExecutionTrace?.(
+          span.spanContext().traceId,
+        );
+        if (underExecution) {
+          // Already nested under a withExecutionTrace — demote to a plain
+          // span so it doesn't create a duplicate $ai_trace.
+          this.reportSpan(span, baseProps, context, timestamp);
+        } else {
+          // Standalone AI SDK call (no execution wrapper) — keep as trace.
+          this.reportTrace(span, baseProps, context, timestamp);
+        }
+        break;
       }
-    } else if (GENERATION_OPERATIONS.has(operationId)) {
-      this.reportGeneration(span, baseProps, context, timestamp);
-    } else if (operationId === TOOL_OPERATION) {
-      this.reportTool(span, baseProps, context, timestamp);
-    } else if (getAttr(span.attributes, EXECUTION_SPAN_ATTR) === 'true') {
-      this.reportExecutionTrace(span, baseProps, context, timestamp);
-    } else {
-      // Generic AI span (embed, etc.)
-      this.reportSpan(span, baseProps, context, timestamp);
+      case 'generation':
+        this.reportGeneration(span, baseProps, context, timestamp);
+        break;
+      case 'tool':
+        this.reportTool(span, baseProps, context, timestamp);
+        break;
+      default:
+        // agent_step, embeddings, other AI spans
+        this.reportSpan(span, baseProps, context, timestamp);
     }
   }
 
@@ -485,24 +637,27 @@ export class PostHogAISdkExporter implements SpanExporter {
       $ai_trace_id: span.spanContext().traceId,
       $ai_span_id: spanId,
       $ai_parent_id: parentOverrides?.get(spanId) ?? rawParentId,
-      $ai_span_name: span.name,
+      $ai_span_name:
+        (getAttr(attrs, 'gen_ai.operation.name') === 'invoke_agent' &&
+          getAttr(attrs, 'gen_ai.agent.name')) ||
+        span.name,
       $ai_latency: durationMs / 1000, // seconds
       $ai_is_error: span.status.code === SpanStatusCode.ERROR,
       ...(span.status.message && { $ai_error: span.status.message }),
       ...(context?.sessionId && { $ai_session_id: context.sessionId }),
       $ai_framework: 'aisdk',
       // Model info (available on most AI SDK spans)
-      ...(getAttr(attrs, 'ai.model.id') && {
-        $ai_model: getAttr(attrs, 'ai.model.id'),
+      ...(getAttr(attrs, 'gen_ai.request.model') && {
+        $ai_model: getAttr(attrs, 'gen_ai.request.model'),
       }),
-      ...(getAttr(attrs, 'ai.model.provider') && {
-        $ai_provider: getAttr(attrs, 'ai.model.provider'),
+      ...(getAttr(attrs, 'gen_ai.provider.name') && {
+        $ai_provider: getAttr(attrs, 'gen_ai.provider.name'),
       }),
     };
   }
 
   // -----------------------------------------------------------------------
-  // $ai_trace event (outer generateText/streamText spans)
+  // $ai_trace event (outer invoke_agent spans)
   // -----------------------------------------------------------------------
 
   private reportTrace(
@@ -514,47 +669,28 @@ export class PostHogAISdkExporter implements SpanExporter {
     const attrs = span.attributes;
     const privacy = this.options.privacyMode;
 
-    const inputTokens =
-      getNumAttr(attrs, 'ai.usage.promptTokens') ??
-      getNumAttr(attrs, 'ai.usage.inputTokens');
-    const outputTokens =
-      getNumAttr(attrs, 'ai.usage.completionTokens') ??
-      getNumAttr(attrs, 'ai.usage.outputTokens');
-    const reasoningTokens = getNumAttr(attrs, 'ai.usage.reasoningTokens');
-    const cachedInputTokens = getNumAttr(attrs, 'ai.usage.cachedInputTokens');
-    const totalTokens = getNumAttr(attrs, 'ai.usage.totalTokens');
-
+    const reason = finishReason(attrs);
     const properties: Record<string, unknown> = {
       ...baseProps,
-      ...(inputTokens !== undefined && { $ai_input_tokens: inputTokens }),
-      ...(outputTokens !== undefined && { $ai_output_tokens: outputTokens }),
-      ...(totalTokens !== undefined && { $ai_total_tokens: totalTokens }),
-      ...(reasoningTokens !== undefined && {
-        $ai_reasoning_tokens: reasoningTokens,
-      }),
-      ...(cachedInputTokens !== undefined && {
-        $ai_cache_read_input_tokens: cachedInputTokens,
-      }),
-      ...(getAttr(attrs, 'ai.response.finishReason') && {
-        $ai_output_finish_reason: getAttr(attrs, 'ai.response.finishReason'),
-      }),
+      ...usageProps(attrs),
+      ...(reason && { $ai_output_finish_reason: reason }),
     };
 
     // Input/output for traces
     if (!privacy) {
-      const prompt = getAttr(attrs, 'ai.prompt');
-      if (prompt) {
-        const parsed = safeParse(prompt);
-        if (Array.isArray(parsed)) {
-          properties.$ai_input = parsed;
-        } else {
-          properties.$ai_input = truncate(prompt);
-        }
+      const input = this.buildInput(attrs);
+      if (input !== undefined) {
+        properties.$ai_input = input;
       }
-      const responseText = getAttr(attrs, 'ai.response.text');
+      const outputMessages = parseMessages(
+        getAttr(attrs, 'gen_ai.output.messages'),
+      );
+      // The agent root span's output also carries tool calls/results; the
+      // trace output is the text of the final assistant message.
+      const responseText = textOf(outputMessages?.at(-1)?.parts);
       if (responseText) {
         properties.$ai_output_choices = [
-          { role: 'assistant', content: responseText },
+          { role: 'assistant', content: truncate(responseText) },
         ];
       }
     } else {
@@ -565,8 +701,28 @@ export class PostHogAISdkExporter implements SpanExporter {
     this.capture('$ai_trace', properties, context, timestamp);
   }
 
+  /**
+   * Builds `$ai_input` from `gen_ai.system_instructions` +
+   * `gen_ai.input.messages`. Returns undefined when neither is recorded.
+   */
+  private buildInput(attrs: Attributes): unknown[] | undefined {
+    const input: unknown[] = [];
+    const system = safeParse(getAttr(attrs, 'gen_ai.system_instructions'));
+    if (Array.isArray(system) && system.length > 0) {
+      input.push({
+        role: 'system',
+        content: textOf(system as GenAiPart[]),
+      });
+    }
+    const messages = parseMessages(getAttr(attrs, 'gen_ai.input.messages'));
+    if (messages) {
+      input.push(...convertMessages(messages));
+    }
+    return input.length > 0 ? input : undefined;
+  }
+
   // -----------------------------------------------------------------------
-  // $ai_generation event (inner doGenerate/doStream spans)
+  // $ai_generation event (chat spans: one model call per step)
   // -----------------------------------------------------------------------
 
   private reportGeneration(
@@ -578,37 +734,24 @@ export class PostHogAISdkExporter implements SpanExporter {
     const attrs = span.attributes;
     const privacy = this.options.privacyMode;
 
-    // Token usage (prefer gen_ai.* semconv, fall back to ai.*)
-    const inputTokens =
-      getNumAttr(attrs, 'gen_ai.usage.input_tokens') ??
-      getNumAttr(attrs, 'ai.usage.promptTokens') ??
-      getNumAttr(attrs, 'ai.usage.inputTokens');
-    const outputTokens =
-      getNumAttr(attrs, 'gen_ai.usage.output_tokens') ??
-      getNumAttr(attrs, 'ai.usage.completionTokens') ??
-      getNumAttr(attrs, 'ai.usage.outputTokens');
-    const reasoningTokens = getNumAttr(attrs, 'ai.usage.reasoningTokens');
-    const cachedInputTokens = getNumAttr(attrs, 'ai.usage.cachedInputTokens');
-    const totalTokens = getNumAttr(attrs, 'ai.usage.totalTokens');
+    const inputTokens = getNumAttr(attrs, 'gen_ai.usage.input_tokens');
+    const outputTokens = getNumAttr(attrs, 'gen_ai.usage.output_tokens');
 
     // Model parameters
-    const temperature =
-      getNumAttr(attrs, 'gen_ai.request.temperature') ??
-      getNumAttr(attrs, 'ai.settings.temperature');
-    const maxTokens =
-      getNumAttr(attrs, 'gen_ai.request.max_tokens') ??
-      getNumAttr(attrs, 'ai.settings.maxOutputTokens');
+    const temperature = getNumAttr(attrs, 'gen_ai.request.temperature');
+    const maxTokens = getNumAttr(attrs, 'gen_ai.request.max_tokens');
 
-    // Streaming detection
-    const operationId = getAttr(attrs, 'ai.operationId') || '';
-    const isStream =
-      operationId.includes('stream') || operationId.includes('Stream');
+    // Only streaming calls report a time to first chunk (seconds).
+    const timeToFirstChunk = getNumAttr(
+      attrs,
+      'gen_ai.client.operation.time_to_first_chunk',
+    );
+    const isStream = timeToFirstChunk !== undefined;
 
     // Model ID for cost calculation
     const modelId =
-      getAttr(attrs, 'ai.response.model') ??
       getAttr(attrs, 'gen_ai.response.model') ??
-      getAttr(attrs, 'ai.model.id');
+      getAttr(attrs, 'gen_ai.request.model');
 
     // Cost calculation. In `'server'` mode (default) we omit the cost fields
     // and let PostHog enrich server-side from `$ai_model` + token counts.
@@ -619,20 +762,10 @@ export class PostHogAISdkExporter implements SpanExporter {
         ? getModelCostBreakdown(modelId, inputTokens, outputTokens)
         : {};
 
-    // Streaming metrics
-    const msToFirstChunk = getNumAttr(attrs, 'ai.response.msToFirstChunk');
-
+    const reason = finishReason(attrs);
     const properties: Record<string, unknown> = {
       ...baseProps,
-      ...(inputTokens !== undefined && { $ai_input_tokens: inputTokens }),
-      ...(outputTokens !== undefined && { $ai_output_tokens: outputTokens }),
-      ...(totalTokens !== undefined && { $ai_total_tokens: totalTokens }),
-      ...(reasoningTokens !== undefined && {
-        $ai_reasoning_tokens: reasoningTokens,
-      }),
-      ...(cachedInputTokens !== undefined && {
-        $ai_cache_read_input_tokens: cachedInputTokens,
-      }),
+      ...usageProps(attrs),
       ...(cost.inputCostUsd !== undefined && {
         $ai_input_cost_usd: cost.inputCostUsd,
       }),
@@ -645,86 +778,72 @@ export class PostHogAISdkExporter implements SpanExporter {
       ...(temperature !== undefined && { $ai_temperature: temperature }),
       ...(maxTokens !== undefined && { $ai_max_tokens: maxTokens }),
       $ai_stream: isStream,
-      ...(msToFirstChunk !== undefined && {
-        $ai_time_to_first_token: msToFirstChunk / 1000,
+      ...(timeToFirstChunk !== undefined && {
+        $ai_time_to_first_token: timeToFirstChunk,
       }),
-      ...(getAttr(attrs, 'ai.response.finishReason') && {
-        $ai_output_finish_reason: getAttr(attrs, 'ai.response.finishReason'),
-      }),
-      ...(getAttr(attrs, 'ai.response.id') && {
-        $ai_response_id: getAttr(attrs, 'ai.response.id'),
+      ...(reason && { $ai_output_finish_reason: reason }),
+      ...(getAttr(attrs, 'gen_ai.response.id') && {
+        $ai_response_id: getAttr(attrs, 'gen_ai.response.id'),
       }),
     };
 
     // Input: messages and tools
     if (!privacy) {
-      const messages = getAttr(attrs, 'ai.prompt.messages');
-      if (messages) {
-        const parsed = safeParse(messages);
-        if (Array.isArray(parsed)) {
-          // Strip providerOptions/providerMetadata from each message — large and not useful
-          for (const msg of parsed) {
-            if (msg && typeof msg === 'object') {
-              delete (msg as Record<string, unknown>).providerOptions;
-              delete (msg as Record<string, unknown>).providerMetadata;
-            }
-          }
-          properties.$ai_input = parsed;
-        } else {
-          properties.$ai_input = truncate(messages);
-        }
+      const input = this.buildInput(attrs);
+      if (input !== undefined) {
+        properties.$ai_input = input;
       }
-      // ai.prompt.tools is a string[] (each element is a JSON-stringified tool)
-      const rawTools = attrs['ai.prompt.tools'];
-      if (Array.isArray(rawTools)) {
-        const parsed = rawTools
-          .map((t) => safeParse(String(t)))
-          .filter(Boolean) as { name?: string; description?: string }[];
-        if (parsed.length > 0) {
-          properties.$ai_tools = parsed.map((t) => ({
-            name: t.name,
-            description: t.description,
-          }));
-        }
+      // gen_ai.tool.definitions is a JSON array of { name, description, … }
+      const tools = safeParse(getAttr(attrs, 'gen_ai.tool.definitions'));
+      if (Array.isArray(tools) && tools.length > 0) {
+        properties.$ai_tools = (
+          tools as { name?: string; description?: string }[]
+        ).map((t) => ({ name: t.name, description: t.description }));
       }
     } else {
       properties.$ai_input = REDACTED;
     }
 
-    // Output: response text, object, or tool calls
+    // Output: response text / tool calls
     if (!privacy) {
-      const responseText = getAttr(attrs, 'ai.response.text');
-      const responseObject = getAttr(attrs, 'ai.response.object');
-      const toolCallsRaw = getAttr(attrs, 'ai.response.toolCalls');
+      const outputMessages = parseMessages(
+        getAttr(attrs, 'gen_ai.output.messages'),
+      );
+      if (outputMessages) {
+        const parts = outputMessages.flatMap((m) => m.parts ?? []);
+        const toolCalls = parts.filter((p) => p.type === 'tool_call');
+        const responseText = textOf(parts);
 
-      if (responseText) {
-        properties.$ai_output_choices = [
-          { role: 'assistant', content: truncate(responseText) },
-        ];
-      } else if (responseObject) {
-        properties.$ai_output_choices = [
-          { role: 'assistant', content: truncate(responseObject) },
-        ];
-      }
+        if (responseText) {
+          properties.$ai_output_choices = [
+            { role: 'assistant', content: truncate(responseText) },
+          ];
+        }
 
-      // When the LLM responds with tool calls (no text), format them
-      // as $ai_output_choices so PostHog can extract $ai_tools_called
-      // and display them in the Tools tab.
-      if (toolCallsRaw) {
-        properties.$ai_response_tool_calls = truncate(toolCallsRaw);
+        // When the LLM responds with tool calls (no text), format them
+        // as $ai_output_choices so PostHog can extract $ai_tools_called
+        // and display them in the Tools tab.
+        if (toolCalls.length > 0) {
+          properties.$ai_response_tool_calls = truncate(
+            JSON.stringify(
+              toolCalls.map((tc) => ({
+                toolCallId: tc.id ?? '',
+                toolName: tc.name ?? 'unknown',
+                input: tc.arguments,
+              })),
+            ),
+          );
 
-        if (!properties.$ai_output_choices) {
-          const parsed = safeParse(toolCallsRaw);
-          if (Array.isArray(parsed)) {
-            const contentBlocks = parsed.map(
-              (tc: { toolName?: string; toolCallId?: string }) => ({
-                type: 'tool-call',
-                function: { name: tc.toolName ?? 'unknown' },
-                id: tc.toolCallId ?? '',
-              }),
-            );
+          if (!properties.$ai_output_choices) {
             properties.$ai_output_choices = [
-              { role: 'assistant', content: contentBlocks },
+              {
+                role: 'assistant',
+                content: toolCalls.map((tc) => ({
+                  type: 'tool-call',
+                  function: { name: tc.name ?? 'unknown' },
+                  id: tc.id ?? '',
+                })),
+              },
             ];
           }
         }
@@ -735,18 +854,16 @@ export class PostHogAISdkExporter implements SpanExporter {
 
     // Model parameters object
     const modelParams: Record<string, unknown> = {};
-    const topP =
-      getNumAttr(attrs, 'gen_ai.request.top_p') ??
-      getNumAttr(attrs, 'ai.settings.topP');
-    const topK =
-      getNumAttr(attrs, 'gen_ai.request.top_k') ??
-      getNumAttr(attrs, 'ai.settings.topK');
-    const frequencyPenalty =
-      getNumAttr(attrs, 'gen_ai.request.frequency_penalty') ??
-      getNumAttr(attrs, 'ai.settings.frequencyPenalty');
-    const presencePenalty =
-      getNumAttr(attrs, 'gen_ai.request.presence_penalty') ??
-      getNumAttr(attrs, 'ai.settings.presencePenalty');
+    const topP = getNumAttr(attrs, 'gen_ai.request.top_p');
+    const topK = getNumAttr(attrs, 'gen_ai.request.top_k');
+    const frequencyPenalty = getNumAttr(
+      attrs,
+      'gen_ai.request.frequency_penalty',
+    );
+    const presencePenalty = getNumAttr(
+      attrs,
+      'gen_ai.request.presence_penalty',
+    );
 
     if (topP !== undefined) {
       modelParams.top_p = topP;
@@ -769,7 +886,7 @@ export class PostHogAISdkExporter implements SpanExporter {
   }
 
   // -----------------------------------------------------------------------
-  // $ai_span event (tool calls)
+  // $ai_span event (execute_tool spans)
   // -----------------------------------------------------------------------
 
   private reportTool(
@@ -780,7 +897,7 @@ export class PostHogAISdkExporter implements SpanExporter {
   ): void {
     const attrs = span.attributes;
     const privacy = this.options.privacyMode;
-    const toolName = getAttr(attrs, 'ai.toolCall.name');
+    const toolName = getAttr(attrs, 'gen_ai.tool.name');
 
     const properties: Record<string, unknown> = {
       ...baseProps,
@@ -788,11 +905,11 @@ export class PostHogAISdkExporter implements SpanExporter {
     };
 
     if (!privacy) {
-      const args = getAttr(attrs, 'ai.toolCall.args');
+      const args = getAttr(attrs, 'gen_ai.tool.call.arguments');
       if (args) {
         properties.$ai_input_state = safeParse(args) ?? args;
       }
-      const result = getAttr(attrs, 'ai.toolCall.result');
+      const result = getAttr(attrs, 'gen_ai.tool.call.result');
       if (result) {
         properties.$ai_output_state = safeParse(result) ?? result;
       }
@@ -835,12 +952,19 @@ export class PostHogAISdkExporter implements SpanExporter {
   // -----------------------------------------------------------------------
 
   private reportSpan(
-    _span: ReadableSpan,
+    span: ReadableSpan,
     baseProps: Record<string, unknown>,
     context: ContextInfo | undefined,
     timestamp?: Date,
   ): void {
-    this.capture('$ai_span', baseProps, context, timestamp);
+    // Token usage is only present on spans that report it (e.g. embeddings);
+    // `agent_step` spans don't carry gen_ai.usage.*, so this adds nothing.
+    this.capture(
+      '$ai_span',
+      { ...baseProps, ...usageProps(span.attributes) },
+      context,
+      timestamp,
+    );
   }
 
   // -----------------------------------------------------------------------

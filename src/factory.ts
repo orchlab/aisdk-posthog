@@ -2,9 +2,10 @@
  * Factory for the AI SDK PostHog telemetry instance.
  *
  * Builds a dedicated OTel TracerProvider backed by `PostHogAISdkExporter`
- * and exposes the helpers consumers need to thread `experimental_telemetry`
- * through `generateText` / `streamText` calls and to wrap top-level
- * executions in a parent span with a deterministic traceId.
+ * and exposes the helpers consumers need to thread `telemetry` through
+ * `generateText` / `streamText` calls and to wrap top-level executions in a
+ * parent span with a deterministic traceId. Targets `ai` v7, where spans are
+ * produced by the `@ai-sdk/otel` integration.
  *
  * Usage:
  * ```ts
@@ -13,13 +14,14 @@
  * const result = await generateText({
  *   model,
  *   messages,
- *   experimental_telemetry: telemetry.getTelemetry('chat', { executionUid }),
+ *   telemetry: telemetry.getTelemetry('chat', { executionUid }),
  * });
  * ```
  */
 
 import { createHash } from 'node:crypto';
 
+import { OpenTelemetry } from '@ai-sdk/otel';
 import type { Context, Tracer } from '@opentelemetry/api';
 import {
   ROOT_CONTEXT,
@@ -43,9 +45,13 @@ import type { AISDKTelemetryOptions, AiSdkTelemetryConfig } from './types';
 
 export interface AISDKTelemetryInstance {
   /**
-   * Returns an `experimental_telemetry` config to pass to AI SDK calls,
-   * or `undefined` when the instance is disabled (so the field can be
-   * spread safely).
+   * Returns a `telemetry` config to pass to AI SDK calls (a per-call
+   * `@ai-sdk/otel` integration bound to this instance's tracer), or
+   * `undefined` when the instance is disabled (so the field can be spread
+   * safely).
+   *
+   * `metadata` is stamped on every span of the call as
+   * `ai.telemetry.metadata.<key>`.
    */
   getTelemetry(
     functionId: string,
@@ -80,6 +86,12 @@ export interface AISDKTelemetryInstance {
    */
   toOtelTraceId(executionUid: string): string;
 
+  /**
+   * The OTel tracer backing this instance. Spans started on it flow through
+   * the PostHog exporter (handy for custom spans and tests).
+   */
+  readonly tracer: Tracer;
+
   /** Flushes the underlying PostHog client and tears down the tracer. */
   shutdown(): Promise<void>;
 
@@ -112,6 +124,7 @@ function createNoopInstance(): AISDKTelemetryInstance {
     withExecutionTrace: (_executionUid, _operationId, _metadata, fn) => fn(),
     captureSpanContext: () => ROOT_CONTEXT,
     toOtelTraceId: toOtelTraceId,
+    tracer: trace.getTracer('aisdk-posthog'),
     shutdown: async () => {},
     flush: async () => {},
   };
@@ -140,9 +153,10 @@ export function createAISDKTelemetry(
 
   const logger = options.logger ?? consoleLogger();
 
-  // Map traceId → executionUid so child spans (tool calls, etc.) that drop
-  // their `ai.telemetry.metadata.executionUid` attribute across streaming
-  // boundaries can still resolve context through the precomputed lookup
+  // Map traceId → executionUid so child spans (tool calls, etc.) that lack
+  // an `ai.telemetry.metadata.executionUid` attribute (e.g. when the call
+  // was made without metadata, or across streaming
+  // boundaries) can still resolve context through the precomputed lookup
   // forwarded to the user-supplied resolver.
   const traceIdToExecutionUid = new Map<string, string>();
 
@@ -197,14 +211,35 @@ export function createAISDKTelemetry(
   return {
     toOtelTraceId: toOtelTraceId,
 
+    tracer,
+
     captureSpanContext: () => context.active(),
 
     getTelemetry(functionId, metadata) {
+      // v7 dropped `metadata` and `tracer` from the telemetry options. The
+      // tracer goes into a per-call OpenTelemetry integration, and metadata
+      // is re-attached to every span through its `enrichSpan` hook under
+      // the v6 attribute names (`ai.telemetry.metadata.*`).
+      const metadataAttrs: Record<string, string> = {};
+      for (const [k, v] of Object.entries(metadata ?? {})) {
+        metadataAttrs[`ai.telemetry.metadata.${k}`] = v;
+      }
       return {
         isEnabled: true,
         functionId,
-        metadata: metadata || {},
-        tracer,
+        integrations: [
+          new OpenTelemetry({
+            tracer,
+            // Adds `ai.usage.outputTokenDetails.reasoningTokens`.
+            usage: true,
+            enrichSpan: () => ({
+              ...metadataAttrs,
+              // v7 only sets the functionId (as `gen_ai.agent.name`) on the
+              // root span; keep it available on every span for resolvers.
+              'ai.telemetry.functionId': functionId,
+            }),
+          }),
+        ],
       };
     },
 

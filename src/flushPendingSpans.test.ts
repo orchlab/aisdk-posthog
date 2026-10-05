@@ -5,7 +5,7 @@
  *
  * Two paths under test:
  *   1. "Trust first" — when a child's actual OTel parent IS a known
- *      traceOp span (`ai.streamText` etc.), the override is NOT applied
+ *      traceOp span (`invoke_agent`), the override is NOT applied
  *      and the real parent is preserved. This matters for parallel
  *      sub-agents whose time ranges overlap; without the trust-first
  *      branch, temporal containment would attribute the child to the
@@ -62,13 +62,12 @@ describe('flushPendingSpans temporal containment', () => {
 
   it('keeps real parent when child OTel parent is a known traceOp span', async () => {
     await inst.withExecutionTrace('exec_trust', 'chat.reply', {}, async () => {
-      const cfg = inst.getTelemetry('test')!;
-      const tracer = cfg.tracer;
+      const tracer = inst.tracer;
 
       // Parent A starts in the execution context. Its parent is the
       // execution root span (chat.reply).
-      const parentA = tracer.startSpan('ai.streamText', {
-        attributes: { 'ai.operationId': 'ai.streamText' },
+      const parentA = tracer.startSpan('invoke_agent', {
+        attributes: { 'gen_ai.operation.name': 'invoke_agent' },
       });
 
       // Real child of parentA: started inside parentA's context, so its
@@ -76,8 +75,8 @@ describe('flushPendingSpans temporal containment', () => {
       // this parent and NOT override.
       const parentACtx = trace.setSpan(otelContext.active(), parentA);
       await otelContext.with(parentACtx, async () => {
-        const child = tracer.startSpan('ai.streamText.doStream', {
-          attributes: { 'ai.operationId': 'ai.streamText.doStream' },
+        const child = tracer.startSpan('chat mock', {
+          attributes: { 'gen_ai.operation.name': 'chat' },
         });
         await delay(2);
         child.end();
@@ -93,7 +92,7 @@ describe('flushPendingSpans temporal containment', () => {
     const parentTrace = captureCalls.find(
       (c) =>
         c.event === '$ai_span' &&
-        c.properties.$ai_span_name === 'ai.streamText',
+        c.properties.$ai_span_name === 'invoke_agent',
     );
     expect(parentTrace).toBeDefined();
 
@@ -106,16 +105,15 @@ describe('flushPendingSpans temporal containment', () => {
 
   it('reparents orphan via temporal containment when OTel parent is not a traceOp', async () => {
     await inst.withExecutionTrace('exec_orphan', 'chat.reply', {}, async () => {
-      const cfg = inst.getTelemetry('test')!;
-      const tracer = cfg.tracer;
+      const tracer = inst.tracer;
 
       // Capture the execution context so we can start orphans under
       // the execution root (NOT inside parentA's active context).
       const execCtx = otelContext.active();
 
       // Parent A: a real ai.streamText.
-      const parentA = tracer.startSpan('ai.streamText', {
-        attributes: { 'ai.operationId': 'ai.streamText' },
+      const parentA = tracer.startSpan('invoke_agent', {
+        attributes: { 'gen_ai.operation.name': 'invoke_agent' },
       });
 
       // Orphan: starts under the execution context (parent = chat.reply
@@ -123,8 +121,8 @@ describe('flushPendingSpans temporal containment', () => {
       // re-parent it to parentA.
       await delay(2);
       await otelContext.with(execCtx, async () => {
-        const orphan = tracer.startSpan('ai.streamText.doStream', {
-          attributes: { 'ai.operationId': 'ai.streamText.doStream' },
+        const orphan = tracer.startSpan('chat mock', {
+          attributes: { 'gen_ai.operation.name': 'chat' },
         });
         await delay(2);
         orphan.end();
@@ -137,7 +135,7 @@ describe('flushPendingSpans temporal containment', () => {
     const parentTrace = captureCalls.find(
       (c) =>
         c.event === '$ai_span' &&
-        c.properties.$ai_span_name === 'ai.streamText',
+        c.properties.$ai_span_name === 'invoke_agent',
     );
     expect(parentTrace).toBeDefined();
 
@@ -153,20 +151,19 @@ describe('flushPendingSpans temporal containment', () => {
 
   it('picks the smallest enclosing traceOp span for nested orphans', async () => {
     await inst.withExecutionTrace('exec_nested', 'chat.reply', {}, async () => {
-      const cfg = inst.getTelemetry('test')!;
-      const tracer = cfg.tracer;
+      const tracer = inst.tracer;
       const execCtx = otelContext.active();
 
       // Outer ai.streamText (long-lived).
-      const outer = tracer.startSpan('ai.streamText', {
-        attributes: { 'ai.operationId': 'ai.streamText' },
+      const outer = tracer.startSpan('invoke_agent', {
+        attributes: { 'gen_ai.operation.name': 'invoke_agent' },
       });
 
       await delay(5);
 
       // Inner ai.streamText (short-lived, fully inside outer's window).
-      const inner = tracer.startSpan('ai.streamText', {
-        attributes: { 'ai.operationId': 'ai.streamText' },
+      const inner = tracer.startSpan('invoke_agent', {
+        attributes: { 'gen_ai.operation.name': 'invoke_agent' },
       });
 
       await delay(2);
@@ -175,8 +172,8 @@ describe('flushPendingSpans temporal containment', () => {
       // exporter should pick `inner` (smaller duration) per the
       // bestDuration tiebreak.
       await otelContext.with(execCtx, async () => {
-        const orphan = tracer.startSpan('ai.streamText.doStream', {
-          attributes: { 'ai.operationId': 'ai.streamText.doStream' },
+        const orphan = tracer.startSpan('chat mock', {
+          attributes: { 'gen_ai.operation.name': 'chat' },
         });
         await delay(1);
         orphan.end();
@@ -192,7 +189,7 @@ describe('flushPendingSpans temporal containment', () => {
     const traceOps = captureCalls.filter(
       (c) =>
         c.event === '$ai_span' &&
-        c.properties.$ai_span_name === 'ai.streamText',
+        c.properties.$ai_span_name === 'invoke_agent',
     );
     expect(traceOps).toHaveLength(2);
 

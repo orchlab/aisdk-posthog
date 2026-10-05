@@ -1,18 +1,21 @@
-import type { Tracer } from '@opentelemetry/api';
+import type { Telemetry } from 'ai';
 
 import type { Logger } from './logger';
 import type { ContextResolver } from './posthogExporter';
 
 /**
- * Telemetry config shape matching the Vercel AI SDK's `experimental_telemetry`
- * option. Pass the return value of `instance.getTelemetry()` directly to
- * `generateText` / `streamText` / `generateObject` / `streamObject` calls.
+ * Telemetry config shape matching the Vercel AI SDK v7 `telemetry` option
+ * (`TelemetryOptions`). Pass the return value of `instance.getTelemetry()`
+ * directly to `generateText` / `streamText` / `ToolLoopAgent` / `embed` …
+ *
+ * `integrations` holds a per-call `@ai-sdk/otel` `OpenTelemetry` integration
+ * bound to this instance's tracer. Per-call integrations take precedence over
+ * any globally registered ones, so no `registerTelemetry()` call is needed.
  */
 export interface AiSdkTelemetryConfig {
   isEnabled: true;
   functionId: string;
-  metadata: Record<string, string>;
-  tracer: Tracer;
+  integrations: Telemetry[];
 }
 
 export interface AISDKTelemetryOptions {

@@ -107,21 +107,26 @@ describe('createAISDKTelemetry', () => {
               executionUid: 'exec_smoke_1',
             });
             expect(cfg).toBeDefined();
-            const tracer = cfg!.tracer;
+            const tracer = inst.tracer;
 
             await tracer.startActiveSpan(
-              'ai.streamText.doStream',
+              'chat claude-sonnet-4',
               {
                 attributes: {
-                  'ai.operationId': 'ai.streamText.doStream',
-                  'ai.model.id': 'claude-sonnet-4',
-                  'ai.model.provider': 'anthropic',
-                  'ai.usage.inputTokens': 100,
-                  'ai.usage.outputTokens': 50,
-                  'ai.usage.totalTokens': 150,
-                  'ai.response.text': 'hello world',
-                  'ai.response.finishReason': 'stop',
-                  'ai.settings.temperature': 0.7,
+                  'gen_ai.operation.name': 'chat',
+                  'gen_ai.request.model': 'claude-sonnet-4',
+                  'gen_ai.provider.name': 'anthropic',
+                  'gen_ai.usage.input_tokens': 100,
+                  'gen_ai.usage.output_tokens': 50,
+                  'gen_ai.client.operation.time_to_first_chunk': 0.25,
+                  'gen_ai.output.messages': JSON.stringify([
+                    {
+                      role: 'assistant',
+                      parts: [{ type: 'text', content: 'hello world' }],
+                    },
+                  ]),
+                  'gen_ai.response.finish_reasons': ['stop'],
+                  'gen_ai.request.temperature': 0.7,
                 },
               },
               (span) => {
@@ -188,14 +193,14 @@ describe('createAISDKTelemetry', () => {
           {},
           async () => {
             const cfg = inst.getTelemetry('fn');
-            await cfg!.tracer.startActiveSpan(
-              'ai.toolCall',
+            await inst.tracer.startActiveSpan(
+              'execute_tool searchEmails',
               {
                 attributes: {
-                  'ai.operationId': 'ai.toolCall',
-                  'ai.toolCall.name': 'searchEmails',
-                  'ai.toolCall.args': '{"query":"x"}',
-                  'ai.toolCall.result': '{"hits":1}',
+                  'gen_ai.operation.name': 'execute_tool',
+                  'gen_ai.tool.name': 'searchEmails',
+                  'gen_ai.tool.call.arguments': '{"query":"x"}',
+                  'gen_ai.tool.call.result': '{"hits":1}',
                 },
               },
               (span) => span.end(),
@@ -234,15 +239,14 @@ describe('createAISDKTelemetry', () => {
           'chat.reply',
           {},
           async () => {
-            const cfg = inst.getTelemetry('test-fn')!;
-            await cfg.tracer.startActiveSpan(
-              'ai.generateText.doGenerate',
+            await inst.tracer.startActiveSpan(
+              'chat gpt-4o',
               {
                 attributes: {
-                  'ai.operationId': 'ai.generateText.doGenerate',
-                  'ai.model.id': 'gpt-4o',
-                  'ai.usage.inputTokens': 1000,
-                  'ai.usage.outputTokens': 500,
+                  'gen_ai.operation.name': 'chat',
+                  'gen_ai.request.model': 'gpt-4o',
+                  'gen_ai.usage.input_tokens': 1000,
+                  'gen_ai.usage.output_tokens': 500,
                 },
               },
               (span) => span.end(),
