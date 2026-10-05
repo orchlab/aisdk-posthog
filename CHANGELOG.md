@@ -1,7 +1,5 @@
 # aisdk-posthog
 
-## Unreleased
-
 ### Patch Changes
 
 - Repository restructure for open source: tests moved to `test/`, runnable
