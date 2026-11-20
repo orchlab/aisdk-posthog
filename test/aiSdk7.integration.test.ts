@@ -32,9 +32,10 @@ const captureCalls: Captured[] = [];
 
 vi.mock('posthog-node', () => ({
   PostHog: vi.fn().mockImplementation(() => ({
-    capture: vi.fn((params) => {
+    captureAi: vi.fn((params) => {
       captureCalls.push(params);
     }),
+    on: vi.fn(() => () => {}),
     flush: vi.fn(async () => {}),
     shutdown: vi.fn(async () => {}),
   })),

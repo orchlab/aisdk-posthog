@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { setDefaultTelemetry } from '../src/defaults';
 import { createAISDKTelemetry } from '../src/factory';
 
-// Capture every PostHog `capture` call across the suite.
+// Capture every PostHog `captureAi` call across the suite.
 const captureCalls: Array<{
   distinctId: string;
   event: string;
@@ -14,9 +14,10 @@ const captureCalls: Array<{
 
 vi.mock('posthog-node', () => ({
   PostHog: vi.fn().mockImplementation(() => ({
-    capture: vi.fn((params) => {
+    captureAi: vi.fn((params) => {
       captureCalls.push(params);
     }),
+    on: vi.fn(() => () => {}),
     flush: vi.fn(async () => {}),
     shutdown: vi.fn(async () => {}),
   })),

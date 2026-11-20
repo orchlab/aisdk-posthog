@@ -344,6 +344,14 @@ export class PostHogAISdkExporter implements SpanExporter {
       host: options.host || 'https://us.i.posthog.com',
       flushAt: options.flushAt ?? 1,
     });
+    // posthog-node 6 reports delivery failures only through `'error'`
+    // (`flush()` no longer rejects); route them to the host's logger.
+    this.client.on('error', (err: unknown) => {
+      this.logger.warn(
+        '[PostHogAISdk] PostHog did not deliver some events:',
+        err instanceof Error ? err.message : err,
+      );
+    });
 
     if (options.debug) {
       this.logger.info(
@@ -1014,6 +1022,7 @@ export class PostHogAISdkExporter implements SpanExporter {
       });
     }
 
-    this.client.capture(captureParams);
+    // `$ai_*` events go to PostHog's dedicated AI capture endpoint.
+    this.client.captureAi(captureParams);
   }
 }

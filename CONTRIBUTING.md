@@ -4,7 +4,7 @@ Thanks for helping out. This is a community-maintained package, not an official 
 
 ## Setup
 
-Requirements: Node >= 22.12 and [pnpm](https://pnpm.io) 10.
+Requirements: Node >= 22.22 and [pnpm](https://pnpm.io) 10.
 
 ```bash
 pnpm install
