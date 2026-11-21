@@ -1,6 +1,6 @@
 {
   "name": "aisdk-posthog",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "PostHog LLM analytics integration for the Vercel AI SDK (OpenTelemetry-based)",
   "author": "Miro K <mirik.kubal@gmail.com>",
   "contributors": [
@@ -62,7 +62,7 @@
   },
   "sideEffects": false,
   "engines": {
-    "node": ">=22.12"
+    "node": ">=22.22"
   },
   "scripts": {
     "build": "tsup",
@@ -85,7 +85,7 @@
     "@opentelemetry/core": "^2.5.1",
     "@opentelemetry/sdk-trace-base": "^2.5.1",
     "llm-info": "^1.0.69",
-    "posthog-node": "^5.9.2"
+    "posthog-node": "^6.0.5"
   },
   "peerDependencies": {
     "@ai-sdk/otel": ">=1.0.0",

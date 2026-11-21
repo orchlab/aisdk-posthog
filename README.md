@@ -33,14 +33,15 @@ pnpm add aisdk-posthog ai @ai-sdk/otel
 yarn add aisdk-posthog ai @ai-sdk/otel
 ```
 
-`ai` (>=7) and `@ai-sdk/otel` are required peer dependencies. Node 22.12+.
+`ai` (>=7) and `@ai-sdk/otel` are required peer dependencies. Node 22.22+ (required by `posthog-node` 6).
 
 ## Version Compatibility
 
-| `aisdk-posthog` | `ai` (Vercel AI SDK) |
-| --------------- | -------------------- |
-| >= 0.3.0        | ^7                   |
-| 0.2.x           | ^6                   |
+| `aisdk-posthog` | `ai` (Vercel AI SDK) | `posthog-node` | Node     |
+| --------------- | -------------------- | -------------- | -------- |
+| >= 0.4.0        | ^7                   | ^6             | >= 22.22 |
+| 0.3.x           | ^7                   | ^5             | >= 22.12 |
+| 0.2.x           | ^6                   | ^5             | >= 22.12 |
 
 ## Quick start
 

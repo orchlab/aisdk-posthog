@@ -1,6 +1,23 @@
 # aisdk-posthog
 
-## Unreleased
+## 0.4.0
+
+### Minor Changes
+
+- **posthog-node 6 (breaking).** The bundled PostHog client is now
+  `posthog-node` ^6.0.5 (was ^5.9.2), so hosts that also use posthog-node 6
+  no longer install two copies.
+
+  - `$ai_*` events are sent with `captureAi()`, which posts them to PostHog's
+    dedicated AI endpoint (`/i/v1/ai/events`) on their own batching lane,
+    instead of `capture()` to the analytics endpoint. If you send events
+    through your own reverse proxy, it must forward `/i/v1/ai/events` (and
+    accept large bodies); see posthog-node's MIGRATION.md.
+  - Delivery failures are reported through the configured `logger`
+    (`warn`). posthog-node 6 no longer rejects `flush()` on delivery
+    failure, so `forceFlush()` / `shutdown()` resolve even when events were
+    not delivered.
+  - Requires Node >= 22.22 (posthog-node 6 supports `^20.20.0 || >=22.22.0`).
 
 ### Documentation
 

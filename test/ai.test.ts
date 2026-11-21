@@ -2,28 +2,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { setDefaultTelemetry } from '../src/defaults';
 import { createAISDKTelemetry } from '../src/factory';
+import { captureCalls, resetPosthogMock } from './posthogMock';
 
-// Capture every PostHog `capture` call across the suite.
-const captureCalls: Array<{
-  distinctId: string;
-  event: string;
-  properties: Record<string, unknown>;
-  groups?: Record<string, string>;
-  timestamp?: Date;
-}> = [];
-
-vi.mock('posthog-node', () => ({
-  PostHog: vi.fn().mockImplementation(() => ({
-    capture: vi.fn((params) => {
-      captureCalls.push(params);
-    }),
-    flush: vi.fn(async () => {}),
-    shutdown: vi.fn(async () => {}),
-  })),
-}));
+vi.mock('posthog-node', () => import('./posthogMock'));
 
 afterEach(() => {
-  captureCalls.length = 0;
+  resetPosthogMock();
   setDefaultTelemetry(undefined);
 });
 

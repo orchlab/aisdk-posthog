@@ -25,25 +25,12 @@ import { context as otelContext, trace } from '@opentelemetry/api';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { createAISDKTelemetry } from '../src/factory';
+import { captureCalls, resetPosthogMock } from './posthogMock';
 
-const captureCalls: Array<{
-  distinctId: string;
-  event: string;
-  properties: Record<string, unknown>;
-}> = [];
-
-vi.mock('posthog-node', () => ({
-  PostHog: vi.fn().mockImplementation(() => ({
-    capture: vi.fn((params) => {
-      captureCalls.push(params);
-    }),
-    flush: vi.fn(async () => {}),
-    shutdown: vi.fn(async () => {}),
-  })),
-}));
+vi.mock('posthog-node', () => import('./posthogMock'));
 
 afterEach(() => {
-  captureCalls.length = 0;
+  resetPosthogMock();
 });
 
 const delay = (ms: number) => new Promise((res) => setTimeout(res, ms));
