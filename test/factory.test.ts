@@ -1,32 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createAISDKTelemetry } from '../src/factory';
+import { captureCalls, resetPosthogMock } from './posthogMock';
 
-// Capture every PostHog `captureAi` call across the suite. Mocking the module
-// means our factory's `new PostHog(...)` returns the stub regardless of
-// where it's instantiated. `vi.mock` is hoisted by vitest above all imports
-// at compile time, so the mock applies before `../src/factory` loads `posthog-node`.
-const captureCalls: Array<{
-  distinctId: string;
-  event: string;
-  properties: Record<string, unknown>;
-  groups?: Record<string, string>;
-  timestamp?: Date;
-}> = [];
-
-vi.mock('posthog-node', () => ({
-  PostHog: vi.fn().mockImplementation(() => ({
-    captureAi: vi.fn((params) => {
-      captureCalls.push(params);
-    }),
-    on: vi.fn(() => () => {}),
-    flush: vi.fn(async () => {}),
-    shutdown: vi.fn(async () => {}),
-  })),
-}));
+vi.mock('posthog-node', () => import('./posthogMock'));
 
 afterEach(() => {
-  captureCalls.length = 0;
+  resetPosthogMock();
 });
 
 describe('createAISDKTelemetry', () => {

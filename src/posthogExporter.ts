@@ -985,7 +985,8 @@ export class PostHogAISdkExporter implements SpanExporter {
   // -----------------------------------------------------------------------
 
   private capture(
-    event: string,
+    // `captureAi` events must be `$ai_*`; PostHog drops any other name.
+    event: `$ai_${string}`,
     properties: Record<string, unknown>,
     context: ContextInfo | undefined,
     timestamp?: Date,

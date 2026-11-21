@@ -20,29 +20,12 @@ import * as aiSubpath from '../src/ai';
 import { setDefaultTelemetry } from '../src/defaults';
 import { createAISDKTelemetry, toOtelTraceId } from '../src/factory';
 import { subAgent } from '../src/subAgent';
+import { captureCalls, resetPosthogMock } from './posthogMock';
 
-interface Captured {
-  distinctId: string;
-  event: string;
-  properties: Record<string, any>;
-  groups?: Record<string, string>;
-}
-
-const captureCalls: Captured[] = [];
-
-vi.mock('posthog-node', () => ({
-  PostHog: vi.fn().mockImplementation(() => ({
-    captureAi: vi.fn((params) => {
-      captureCalls.push(params);
-    }),
-    on: vi.fn(() => () => {}),
-    flush: vi.fn(async () => {}),
-    shutdown: vi.fn(async () => {}),
-  })),
-}));
+vi.mock('posthog-node', () => import('./posthogMock'));
 
 afterEach(() => {
-  captureCalls.length = 0;
+  resetPosthogMock();
   setDefaultTelemetry(undefined);
 });
 

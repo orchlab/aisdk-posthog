@@ -8,32 +8,17 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createAISDKTelemetry } from '../src/factory';
+import {
+  capture,
+  captureCalls,
+  errorListeners,
+  resetPosthogMock,
+} from './posthogMock';
 
-const client = vi.hoisted(() => ({
-  capture: vi.fn(),
-  captureAi: vi.fn(),
-  errorListeners: [] as Array<(err: unknown) => void>,
-}));
-
-vi.mock('posthog-node', () => ({
-  PostHog: vi.fn().mockImplementation(() => ({
-    capture: client.capture,
-    captureAi: client.captureAi,
-    on: vi.fn((event: string, listener: (err: unknown) => void) => {
-      if (event === 'error') {
-        client.errorListeners.push(listener);
-      }
-      return () => {};
-    }),
-    flush: vi.fn(async () => {}),
-    shutdown: vi.fn(async () => {}),
-  })),
-}));
+vi.mock('posthog-node', () => import('./posthogMock'));
 
 afterEach(() => {
-  client.capture.mockClear();
-  client.captureAi.mockClear();
-  client.errorListeners.length = 0;
+  resetPosthogMock();
 });
 
 function silentLogger() {
@@ -67,12 +52,8 @@ describe('posthog-node client usage', () => {
       await inst.shutdown();
     }
 
-    const events = client.captureAi.mock.calls.map(([params]) => params.event);
-    expect(events).toContain('$ai_generation');
-    expect(events.every((event: string) => event.startsWith('$ai_'))).toBe(
-      true,
-    );
-    expect(client.capture).not.toHaveBeenCalled();
+    expect(captureCalls.map((c) => c.event)).toContain('$ai_generation');
+    expect(capture).not.toHaveBeenCalled();
   });
 
   it("forwards the client's delivery errors to the logger", async () => {
@@ -85,8 +66,8 @@ describe('posthog-node client usage', () => {
     });
 
     try {
-      expect(client.errorListeners).toHaveLength(1);
-      client.errorListeners[0]!(new Error('3 event(s) were not delivered'));
+      expect(errorListeners).toHaveLength(1);
+      errorListeners[0]!(new Error('3 event(s) were not delivered'));
 
       expect(logger.warn).toHaveBeenCalledWith(
         '[PostHogAISdk] PostHog did not deliver some events:',
